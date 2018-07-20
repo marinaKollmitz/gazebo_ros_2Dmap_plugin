@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<package>
+  <name>gazebo_ros_2Dmap_plugin</name>
+  <version>0.0.0</version>
+  <description>Gazebo simulator plugin to automatically generate a 2D occupancy map from the simulated world at a given height.</description>
+
+  <maintainer email="kollmitz@informatik.uni-freiburg.de">Marina Kollmitz</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>gazebo_msgs</build_depend>
+  <build_depend>gazebo_ros</build_depend>
+  <build_depend>gazebo_plugins</build_depend>
+  <build_depend>gazebo_ros_control</build_depend>
+  <build_depend>joint_state_publisher</build_depend>
+  <build_depend>kdl_parser</build_depend>
+  <build_depend>robot_state_publisher</build_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>tf</build_depend>
+  <build_depend>xacro</build_depend>
+  <build_depend>octomap_msgs</build_depend>
+  <build_depend>message_generation</build_depend>
+  <build_depend>octomap_ros</build_depend>
+  <run_depend>octomap_ros</run_depend>
+  <run_depend>message_runtime</run_depend>
+  <run_depend>octomap_msgs</run_depend>
+  <run_depend>gazebo_msgs</run_depend>
+  <run_depend>gazebo_ros</run_depend>
+  <run_depend>gazebo_ros_control</run_depend>
+  <run_depend>joint_state_publisher</run_depend>
+  <run_depend>kdl_parser</run_depend>
+  <run_depend>robot_state_publisher</run_depend>
+  <run_depend>roscpp</run_depend>
+  <run_depend>rospy</run_depend>
+  <run_depend>tf</run_depend>
+  <run_depend>xacro</run_depend>
+
+</package>
