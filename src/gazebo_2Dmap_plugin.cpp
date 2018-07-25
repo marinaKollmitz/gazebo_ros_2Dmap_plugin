@@ -190,6 +190,37 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
   return false;
 }
 
+void OccupancyMapFromWorld::cell2world(unsigned int cell_x, unsigned int cell_y,
+                                       double map_size_x, double map_size_y,
+                                       double map_resolution,
+                                       double& world_x, double &world_y)
+{
+  world_x = cell_x * map_resolution - map_size_x/2 + map_resolution/2;
+  world_y = cell_y * map_resolution - map_size_y/2 + map_resolution/2;
+}
+
+void OccupancyMapFromWorld::world2cell(double world_x, double world_y,
+                                       double map_size_x, double map_size_y,
+                                       double map_resolution,
+                                       unsigned int& cell_x, unsigned int& cell_y)
+{
+  cell_x = (world_x + map_size_x/2) / map_resolution;
+  cell_y = (world_y + map_size_y/2) / map_resolution;
+}
+
+bool OccupancyMapFromWorld::cell2index(unsigned int cell_x, unsigned int cell_y,
+                                       unsigned int cell_size_x, unsigned int cell_size_y,
+                                       unsigned int& map_index)
+{
+  if(cell_y >= cell_size_y || cell_x >= cell_size_x)
+  {
+    ROS_ERROR_NAMED("gazebo_2Dmap_plugin", "requested cell index is outside of map bounds");
+    return false;
+  }
+  map_index = cell_y * cell_size_y + cell_x;
+  return true;
+}
+
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   double map_height = 0.3;
@@ -206,6 +237,8 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
 
   occupancy_map_ = new nav_msgs::OccupancyGrid();
   occupancy_map_->data.resize(cells_size_x * cells_size_y);
+  //all cells are unknown
+  std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
 
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
   engine->InitForThread();
@@ -215,19 +248,28 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
 
   std::cout << "Rasterizing world and checking collisions" << std::endl;
 
-  int ind = 0;
+  unsigned int ind = 0;
+  double world_x, world_y;
   for (unsigned int cell_y = 0; cell_y < cells_size_y; cell_y += 1)
   {
     for (unsigned int cell_x = 0; cell_x < cells_size_x; cell_x += 1)
     {
       //cell origin
-      double world_x = cell_x * map_resolution - map_origin.x - map_size_x/2 + map_resolution/2;
-      double world_y = cell_y * map_resolution - map_origin.y - map_size_y/2 + map_resolution/2;
+      cell2world(cell_x, cell_y, map_size_x, map_size_y, map_resolution,
+                 world_x, world_y);
 
       if (worldCellIntersection(math::Vector3(world_x, world_y, map_height),
                                 map_resolution, ray))
       {
-        occupancy_map_->data.at(ind) = 100;
+        if(cell2index(cell_x, cell_y, cells_size_x, cells_size_y, ind))
+        {
+          occupancy_map_->data.at(ind) = 100;
+        }
+        else
+        {
+          ROS_ERROR_NAMED(name_, "could not create map");
+          return;
+        }
       }
       ind += 1;
     }

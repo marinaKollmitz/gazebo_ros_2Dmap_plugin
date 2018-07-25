@@ -44,9 +44,9 @@ namespace gazebo {
 class OccupancyMapFromWorld : public WorldPlugin {
  public:
   OccupancyMapFromWorld()
-      : WorldPlugin()
+      : WorldPlugin(), name_("gazebo_2Dmap_plugin")
   {
-    std::cout << "occupancy map plugin started" << std::endl;
+    ROS_INFO_NAMED(name_, "occupancy map plugin started");
   }
   virtual ~OccupancyMapFromWorld();
 
@@ -71,6 +71,18 @@ class OccupancyMapFromWorld : public WorldPlugin {
   */
   void CreateOccupancyMap();
 
+  static void cell2world(unsigned int cell_x, unsigned int cell_y,
+                         double map_size_x, double map_size_y, double map_resolution,
+                         double& world_x, double &world_y);
+
+  static void world2cell(double world_x, double world_y,
+                         double map_size_x, double map_size_y, double map_resolution,
+                         unsigned int& cell_x, unsigned int& cell_y);
+
+  static bool cell2index(unsigned int cell_x, unsigned int cell_y,
+                         unsigned int cell_size_x, unsigned int cell_size_y,
+                         unsigned int& map_index);
+
  private:
   bool ServiceCallback(std_srvs::Empty::Request& req,
                        std_srvs::Empty::Response& res);
@@ -80,6 +92,7 @@ class OccupancyMapFromWorld : public WorldPlugin {
   ros::ServiceServer map_service_;
   ros::Publisher map_pub_;
   nav_msgs::OccupancyGrid* occupancy_map_;
+  std::string name_;
 };
 
 } // namespace gazebo
