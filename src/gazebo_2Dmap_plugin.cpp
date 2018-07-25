@@ -208,27 +208,61 @@ void OccupancyMapFromWorld::world2cell(double world_x, double world_y,
   cell_y = (world_y + map_size_y/2) / map_resolution;
 }
 
-bool OccupancyMapFromWorld::cell2index(unsigned int cell_x, unsigned int cell_y,
+bool OccupancyMapFromWorld::cell2index(int cell_x, int cell_y,
                                        unsigned int cell_size_x, unsigned int cell_size_y,
                                        unsigned int& map_index)
 {
-  if(cell_y >= cell_size_y || cell_x >= cell_size_x)
+  if(cell_x >= 0 && cell_x < cell_size_x && cell_y >= 0 && cell_y < cell_size_y)
   {
-    ROS_ERROR_NAMED("gazebo_2Dmap_plugin", "requested cell index is outside of map bounds");
+    map_index = cell_y * cell_size_y + cell_x;
+    return true;
+  }
+  else
+  {
+    //return false when outside map bounds
     return false;
   }
-  map_index = cell_y * cell_size_y + cell_x;
-  return true;
+}
+
+bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
+                                       unsigned int cell_size_y,
+                                       unsigned int& cell_x, unsigned int& cell_y)
+{
+  cell_y = index / cell_size_y;
+  cell_x = index % cell_size_x;
+
+  if(cell_x >= 0 && cell_x < cell_size_x && cell_y >= 0 && cell_y < cell_size_y)
+    return true;
+  else
+  {
+    //return false when outside map bounds
+    return false;
+  }
+}
+
+bool OccupancyMapFromWorld::findCellWithVal(std::vector<int8_t> map,
+                                            int target_value, unsigned int& map_index)
+{
+  for(int i=0; i<map.size(); i++)
+  {
+    if(map.at(i) == target_value)
+    {
+      map_index = i;
+      return true;
+    }
+  }
+  return false;
 }
 
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   double map_height = 0.3;
 
+  //TODO map origin different from (0,0)
   math::Vector3 map_origin(0,0,map_height);
 
-  double map_size_x = 20;
-  double map_size_y = 20;
+  double map_size_x = 10;
+  double map_size_y = 10;
 
   double map_resolution = 0.1;
 
@@ -237,7 +271,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
 
   occupancy_map_ = new nav_msgs::OccupancyGrid();
   occupancy_map_->data.resize(cells_size_x * cells_size_y);
-  //all cells are unknown
+  //all cells are initially unknown
   std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
 
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
@@ -248,6 +282,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
 
   std::cout << "Rasterizing world and checking collisions" << std::endl;
 
+  //mark occupied cells
   unsigned int ind = 0;
   double world_x, world_y;
   for (unsigned int cell_y = 0; cell_y < cells_size_y; cell_y += 1)
@@ -275,8 +310,69 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
     }
   }
 
+  //identify free space by spreading out from initial robot cell
+  double robot_x = 0;
+  double robot_y = 0;
+
+  //find initial robot cell
+  unsigned int cell_x, cell_y, map_index;
+  world2cell(robot_x, robot_y, map_size_x, map_size_y, map_resolution,
+             cell_x, cell_y);
+
+  //mark cell as free in occupancy map
+  if(!cell2index(cell_x, cell_y, cells_size_x, cells_size_y, map_index))
+  {
+    ROS_ERROR_NAMED(name_, "initial robot pos is outside map, could not create "
+                           "map");
+    return;
+  }
+
+  occupancy_map_->data.at(map_index) = 1;
+
+  int wavefront_step = 1;
+  while(findCellWithVal(occupancy_map_->data, wavefront_step, map_index))
+  {
+    while(findCellWithVal(occupancy_map_->data, wavefront_step, map_index))
+    {
+      index2cell(map_index, cells_size_x, cells_size_y, cell_x, cell_y);
+
+      //mark cell as free
+      occupancy_map_->data.at(map_index) = 0;
+
+      //explore cells neighbors in an 8-connected grid
+      unsigned int child_index;
+      double child_val;
+
+      //8-connected grid
+      for(int i=-1; i<2; i++)
+      {
+        for(int j=-1; j<2; j++)
+        {
+          //makes sure index is inside map bounds
+          if(cell2index(cell_x + i, cell_y + j, cells_size_x, cells_size_y, child_index))
+          {
+            child_val = occupancy_map_->data.at(child_index);
+
+            //only update value if cell is unknown
+            if(child_val == -1)
+            {
+              occupancy_map_->data.at(child_index) = wavefront_step + 1;
+              if(wavefront_step + 1 == 100)
+                occupancy_map_->data.at(child_index) = wavefront_step + 2;
+            }
+          }
+        }
+      }
+    }
+    wavefront_step += 1;
+    //value of 100 means occupied, we will therefore skip this value
+    if(wavefront_step == 100)
+      wavefront_step = 101;
+  }
+
+  std::cout << "\rOccupancy Map generation completed                  " << std::endl;
   occupancy_map_->header.stamp = ros::Time::now();
-  occupancy_map_->header.frame_id = "odom";
+  occupancy_map_->header.frame_id = "odom"; //TODO map frame
   occupancy_map_->info.map_load_time = ros::Time(0);
   occupancy_map_->info.resolution = map_resolution;
   occupancy_map_->info.width = cells_size_x;
@@ -285,31 +381,6 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   occupancy_map_->info.origin.position.y = map_origin.y - map_size_y / 2;
   occupancy_map_->info.origin.position.z = map_origin.z;
   occupancy_map_->info.origin.orientation.w = 1;
-
-//  // set unknown to filled
-//  for (double x =
-//       leaf_size / 2 + bounding_box_origin.x - bounding_box_lengths.x / 2;
-//       x < bounding_box_origin.x + bounding_box_lengths.x / 2; x += leaf_size) {
-//    int progress =
-//        round(100 * (x + bounding_box_lengths.x / 2 - bounding_box_origin.x) /
-//              bounding_box_lengths.x);
-//    std::cout << "\rFilling closed spaces... " << progress << "%              ";
-
-//    for (double y =
-//         leaf_size / 2 + bounding_box_origin.y - bounding_box_lengths.y / 2;
-//         y < bounding_box_origin.y + bounding_box_lengths.y / 2;
-//         y += leaf_size) {
-//      for (double z = leaf_size / 2 + bounding_box_origin.z -
-//           bounding_box_lengths.z / 2;
-//           z < bounding_box_origin.z + bounding_box_lengths.z / 2;
-//           z += leaf_size) {
-//        octomap::OcTreeNode* seed = octomap_->search(x, y, z);
-//        if (!seed) octomap_->setNodeValue(x, y, z, 1);
-//      }
-//    }
-//  }
-
-  std::cout << "\rOccupancy Map generation completed                  " << std::endl;
   map_pub_.publish(*occupancy_map_);
 }
 
