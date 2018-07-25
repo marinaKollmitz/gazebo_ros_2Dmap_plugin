@@ -240,20 +240,6 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
   }
 }
 
-bool OccupancyMapFromWorld::findCellWithVal(std::vector<int8_t> map,
-                                            int target_value, unsigned int& map_index)
-{
-  for(int i=0; i<map.size(); i++)
-  {
-    if(map.at(i) == target_value)
-    {
-      map_index = i;
-      return true;
-    }
-  }
-  return false;
-}
-
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   double map_height = 0.3;
@@ -273,6 +259,16 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   occupancy_map_->data.resize(cells_size_x * cells_size_y);
   //all cells are initially unknown
   std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
+  occupancy_map_->header.stamp = ros::Time::now();
+  occupancy_map_->header.frame_id = "odom"; //TODO map frame
+  occupancy_map_->info.map_load_time = ros::Time(0);
+  occupancy_map_->info.resolution = map_resolution;
+  occupancy_map_->info.width = cells_size_x;
+  occupancy_map_->info.height = cells_size_y;
+  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x / 2;
+  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y / 2;
+  occupancy_map_->info.origin.position.z = map_origin.z;
+  occupancy_map_->info.origin.orientation.w = 1;
 
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
   engine->InitForThread();
@@ -319,7 +315,6 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   world2cell(robot_x, robot_y, map_size_x, map_size_y, map_resolution,
              cell_x, cell_y);
 
-  //mark cell as free in occupancy map
   if(!cell2index(cell_x, cell_y, cells_size_x, cells_size_y, map_index))
   {
     ROS_ERROR_NAMED(name_, "initial robot pos is outside map, could not create "
@@ -327,61 +322,48 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
     return;
   }
 
-  occupancy_map_->data.at(map_index) = 1;
+  std::vector<unsigned int> wavefront;
+  wavefront.push_back(map_index);
 
-  int wavefront_step = 1;
-  while(findCellWithVal(occupancy_map_->data, wavefront_step, map_index))
+  while(!wavefront.empty())
   {
-    while(findCellWithVal(occupancy_map_->data, wavefront_step, map_index))
+    map_index = wavefront.at(0);
+    wavefront.erase(wavefront.begin());
+
+    index2cell(map_index, cells_size_x, cells_size_y, cell_x, cell_y);
+
+    //mark cell as free
+    occupancy_map_->data.at(map_index) = 0;
+
+    //explore cells neighbors in an 8-connected grid
+    unsigned int child_index;
+    double child_val;
+
+    //8-connected grid
+    for(int i=-1; i<2; i++)
     {
-      index2cell(map_index, cells_size_x, cells_size_y, cell_x, cell_y);
-
-      //mark cell as free
-      occupancy_map_->data.at(map_index) = 0;
-
-      //explore cells neighbors in an 8-connected grid
-      unsigned int child_index;
-      double child_val;
-
-      //8-connected grid
-      for(int i=-1; i<2; i++)
+      for(int j=-1; j<2; j++)
       {
-        for(int j=-1; j<2; j++)
+        //makes sure index is inside map bounds
+        if(cell2index(cell_x + i, cell_y + j, cells_size_x, cells_size_y, child_index))
         {
-          //makes sure index is inside map bounds
-          if(cell2index(cell_x + i, cell_y + j, cells_size_x, cells_size_y, child_index))
-          {
-            child_val = occupancy_map_->data.at(child_index);
+          child_val = occupancy_map_->data.at(child_index);
 
-            //only update value if cell is unknown
-            if(child_val == -1)
-            {
-              occupancy_map_->data.at(child_index) = wavefront_step + 1;
-              if(wavefront_step + 1 == 100)
-                occupancy_map_->data.at(child_index) = wavefront_step + 2;
-            }
+          //only update value if cell is unknown
+          if(child_val != 100 && child_val != 0 && child_val != 50)
+          {
+            wavefront.push_back(child_index);
+            //mark wavefront in map so we don't add children to wavefront multiple
+            //times
+            occupancy_map_->data.at(child_index) = 50;
           }
         }
       }
     }
-    wavefront_step += 1;
-    //value of 100 means occupied, we will therefore skip this value
-    if(wavefront_step == 100)
-      wavefront_step = 101;
   }
 
-  std::cout << "\rOccupancy Map generation completed                  " << std::endl;
-  occupancy_map_->header.stamp = ros::Time::now();
-  occupancy_map_->header.frame_id = "odom"; //TODO map frame
-  occupancy_map_->info.map_load_time = ros::Time(0);
-  occupancy_map_->info.resolution = map_resolution;
-  occupancy_map_->info.width = cells_size_x;
-  occupancy_map_->info.height = cells_size_y;
-  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x / 2;
-  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y / 2;
-  occupancy_map_->info.origin.position.z = map_origin.z;
-  occupancy_map_->info.origin.orientation.w = 1;
   map_pub_.publish(*occupancy_map_);
+  std::cout << "\rOccupancy Map generation completed                  " << std::endl;
 }
 
 // Register this plugin with the simulator

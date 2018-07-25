@@ -86,9 +86,6 @@ class OccupancyMapFromWorld : public WorldPlugin {
   static bool index2cell(int index, unsigned int cell_size_x, unsigned int cell_size_y,
                          unsigned int& cell_x, unsigned int& cell_y);
 
-  static bool findCellWithVal(std::vector<int8_t> map, int target_value,
-                              unsigned int& map_index);
-
  private:
   bool ServiceCallback(std_srvs::Empty::Request& req,
                        std_srvs::Empty::Response& res);
