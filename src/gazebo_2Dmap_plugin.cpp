@@ -20,7 +20,6 @@
 
 #include "gazebo_2Dmap_plugin.h"
 
-#include <octomap_msgs/conversions.h>
 #include <gazebo/common/Time.hh>
 #include <gazebo/common/CommonTypes.hh>
 #include <gazebo/math/Vector3.hh>
