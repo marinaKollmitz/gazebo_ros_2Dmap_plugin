@@ -37,7 +37,7 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   world_ = _parent;
 
-  map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("gazebo_2Dmap_plugin/map", 1);
+  map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("map", 1);
   map_service_ = nh_.advertiseService(
         "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::ServiceCallback, this);
 
