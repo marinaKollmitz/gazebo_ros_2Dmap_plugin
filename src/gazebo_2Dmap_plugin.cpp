@@ -275,35 +275,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
       boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
         engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
 
-  std::cout << "Rasterizing world and checking collisions" << std::endl;
-
-  //mark occupied cells
-  unsigned int ind = 0;
-  double world_x, world_y;
-  for (unsigned int cell_y = 0; cell_y < cells_size_y; cell_y += 1)
-  {
-    for (unsigned int cell_x = 0; cell_x < cells_size_x; cell_x += 1)
-    {
-      //cell origin
-      cell2world(cell_x, cell_y, map_size_x, map_size_y, map_resolution,
-                 world_x, world_y);
-
-      if (worldCellIntersection(math::Vector3(world_x, world_y, map_height),
-                                map_resolution, ray))
-      {
-        if(cell2index(cell_x, cell_y, cells_size_x, cells_size_y, ind))
-        {
-          occupancy_map_->data.at(ind) = 100;
-        }
-        else
-        {
-          ROS_ERROR_NAMED(name_, "could not create map");
-          return;
-        }
-      }
-      ind += 1;
-    }
-  }
+  std::cout << "Starting wavefront expansion for mapping" << std::endl;
 
   //identify free space by spreading out from initial robot cell
   double robot_x = 0;
@@ -324,6 +296,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   std::vector<unsigned int> wavefront;
   wavefront.push_back(map_index);
 
+  //wavefront expansion for identifying free, unknown and occupied cells
   while(!wavefront.empty())
   {
     map_index = wavefront.at(0);
@@ -336,7 +309,8 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
 
     //explore cells neighbors in an 8-connected grid
     unsigned int child_index;
-    double child_val;
+    double world_x, world_y;
+    uint8_t child_val;
 
     //8-connected grid
     for(int i=-1; i<2; i++)
@@ -351,10 +325,25 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
           //only update value if cell is unknown
           if(child_val != 100 && child_val != 0 && child_val != 50)
           {
-            wavefront.push_back(child_index);
-            //mark wavefront in map so we don't add children to wavefront multiple
-            //times
-            occupancy_map_->data.at(child_index) = 50;
+            cell2world(cell_x + i, cell_y + j, map_size_x, map_size_y, map_resolution,
+                       world_x, world_y);
+
+            bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height),
+                                                       map_resolution, ray);
+
+            if(cell_occupied)
+              //mark cell as occupied
+              occupancy_map_->data.at(child_index) = 100;
+
+
+            else
+            {
+              //add cell to wavefront
+              wavefront.push_back(child_index);
+              //mark wavefront in map so we don't add children to wavefront multiple
+              //times
+              occupancy_map_->data.at(child_index) = 50;
+            }
           }
         }
       }
