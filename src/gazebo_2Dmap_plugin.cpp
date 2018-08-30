@@ -162,27 +162,37 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
   double dist;
   std::string entity_name;
 
-  for(int i=-1; i<2; i+=2)
+  int cell_length_steps = 10;
+  double side_length;
+
+  //check for collisions with beams at increasing sizes to capture smaller
+  //objects inside the cell
+  for(int step=1; step<=cell_length_steps; step++)
   {
-    double start_x = cell_center.x + i * cell_length/2;
-    double start_y = cell_center.y - i * cell_length/2;
+    side_length = cell_length / cell_length_steps * step;
 
-    for(int j=-1; j<2; j+=2)
+    for(int i=-1; i<2; i+=2)
     {
-      double end_x = cell_center.x + j * cell_length/2;
-      double end_y = cell_center.y + j * cell_length/2;
+      double start_x = cell_center.x + i * side_length/2;
+      double start_y = cell_center.y - i * side_length/2;
 
-//      std::cout << "start_x" << start_x << std::endl;
-//      std::cout << "start_y" << start_y << std::endl;
-//      std::cout << "end_x" << end_x << std::endl;
-//      std::cout << "end_y" << end_y << std::endl;
+      for(int j=-1; j<2; j+=2)
+      {
+        double end_x = cell_center.x + j * side_length/2;
+        double end_y = cell_center.y + j * side_length/2;
 
-      ray->SetPoints(math::Vector3(start_x, start_y, cell_center.z),
-                     math::Vector3(end_x, end_y, cell_center.z));
-      ray->GetIntersection(dist, entity_name);
+        //      std::cout << "start_x" << start_x << std::endl;
+        //      std::cout << "start_y" << start_y << std::endl;
+        //      std::cout << "end_x" << end_x << std::endl;
+        //      std::cout << "end_y" << end_y << std::endl;
 
-      if(!entity_name.empty())
-        return true;
+        ray->SetPoints(math::Vector3(start_x, start_y, cell_center.z),
+                       math::Vector3(end_x, end_y, cell_center.z));
+        ray->GetIntersection(dist, entity_name);
+
+        if(!entity_name.empty())
+          return true;
+      }
     }
   }
 
