@@ -8,7 +8,12 @@ Check out the plugin in your `catkin_ws` and build it with `catkin_make`.
 To include the plugin, add the following line in between the `<world> </world>` tags of your Gazebo world file:
 
 ```
-<plugin name='gazebo_occupancy_map' filename='libgazebo_2Dmap_plugin.so'/>
+<plugin name='gazebo_occupancy_map' filename='libgazebo_2Dmap_plugin.so'>
+    <map_resolution>0.1</map_resolution> <!-- in meters, optional, default 0.1 -->
+    <map_height>0.3</map_height>         <!-- in meters, optional, default 0.3 -->
+    <map_size_x>10</map_size_x>          <!-- in meters, optional, default 10 -->
+    <map_size_y>10</map_size_y>          <!-- in meters, optional, default 10 -->
+</plugin>
 ```
 
 To generate the map, call the `/gazebo_2Dmap_plugin/generate_map` ros service:
