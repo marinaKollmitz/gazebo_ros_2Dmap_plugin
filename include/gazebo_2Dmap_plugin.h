@@ -96,6 +96,10 @@ class OccupancyMapFromWorld : public WorldPlugin {
   ros::Publisher map_pub_;
   nav_msgs::OccupancyGrid* occupancy_map_;
   std::string name_;
+  double map_resolution_;
+  double map_height_;
+  double map_size_x_;
+  double map_size_y_;
 };
 
 } // namespace gazebo

@@ -40,6 +40,28 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   map_service_ = nh_.advertiseService(
         "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::ServiceCallback, this);
 
+  map_resolution_ = 0.1;
+
+  if(_sdf->HasElement("map_resolution"))
+    map_resolution_ = _sdf->GetElement("map_resolution")->Get<double>();
+
+  map_height_ = 0.3;
+
+  if(_sdf->HasElement("map_z"))
+    map_height_ = _sdf->GetElement("map_z")->Get<double>();
+
+  map_size_x_ = 10.0;
+
+  if(_sdf->HasElement("map_size_x"))
+    map_size_x_ = _sdf->GetElement("map_size_x")->Get<double>();
+
+  map_size_y_ = 10.0;
+
+  if(_sdf->HasElement("map_size_y"))
+    map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
+
+  sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
+
   //  std::string service_name = "world/get_octomap";
   //  std::string octomap_pub_topic = "world/octomap";
   //  getSdfParam<std::string>(_sdf, "octomapPubTopic", octomap_pub_topic,
@@ -251,18 +273,11 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
 
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
-  double map_height = 0.3;
-
   //TODO map origin different from (0,0)
-  math::Vector3 map_origin(0,0,map_height);
+  math::Vector3 map_origin(0,0,map_height_);
 
-  double map_size_x = 10;
-  double map_size_y = 10;
-
-  double map_resolution = 0.1;
-
-  unsigned int cells_size_x = map_size_x / map_resolution;
-  unsigned int cells_size_y = map_size_y / map_resolution;
+  unsigned int cells_size_x = map_size_x_ / map_resolution_;
+  unsigned int cells_size_y = map_size_y_ / map_resolution_;
 
   occupancy_map_ = new nav_msgs::OccupancyGrid();
   occupancy_map_->data.resize(cells_size_x * cells_size_y);
@@ -271,11 +286,11 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   occupancy_map_->header.stamp = ros::Time::now();
   occupancy_map_->header.frame_id = "odom"; //TODO map frame
   occupancy_map_->info.map_load_time = ros::Time(0);
-  occupancy_map_->info.resolution = map_resolution;
+  occupancy_map_->info.resolution = map_resolution_;
   occupancy_map_->info.width = cells_size_x;
   occupancy_map_->info.height = cells_size_y;
-  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x / 2;
-  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y / 2;
+  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
+  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
   occupancy_map_->info.origin.position.z = map_origin.z;
   occupancy_map_->info.origin.orientation.w = 1;
 
@@ -293,7 +308,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
 
   //find initial robot cell
   unsigned int cell_x, cell_y, map_index;
-  world2cell(robot_x, robot_y, map_size_x, map_size_y, map_resolution,
+  world2cell(robot_x, robot_y, map_size_x_, map_size_y_, map_resolution_,
              cell_x, cell_y);
 
   if(!cell2index(cell_x, cell_y, cells_size_x, cells_size_y, map_index))
@@ -335,11 +350,11 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
           //only update value if cell is unknown
           if(child_val != 100 && child_val != 0 && child_val != 50)
           {
-            cell2world(cell_x + i, cell_y + j, map_size_x, map_size_y, map_resolution,
+            cell2world(cell_x + i, cell_y + j, map_size_x_, map_size_y_, map_resolution_,
                        world_x, world_y);
 
-            bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height),
-                                                       map_resolution, ray);
+            bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
+                                                       map_resolution_, ray);
 
             if(cell_occupied)
               //mark cell as occupied
