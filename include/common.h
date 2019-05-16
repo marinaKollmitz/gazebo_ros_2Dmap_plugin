@@ -23,8 +23,8 @@
 #define ROTORS_GAZEBO_PLUGINS_COMMON_H_
 
 #include <Eigen/Dense>
-#include <gazebo-7/gazebo/gazebo.hh>
-//#include <gazebo/gazebo.hh>
+//#include <gazebo-7/gazebo/gazebo.hh>
+#include <gazebo/gazebo.hh>
 
 namespace gazebo {
 

@@ -59,122 +59,20 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   if(_sdf->HasElement("map_size_y"))
     map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
-
-  sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
-
-  //  std::string service_name = "world/get_octomap";
-  //  std::string octomap_pub_topic = "world/octomap";
-  //  getSdfParam<std::string>(_sdf, "octomapPubTopic", octomap_pub_topic,
-  //                           octomap_pub_topic);
-  //  getSdfParam<std::string>(_sdf, "octomapServiceName", service_name,
-  //                           service_name);
-
-  //  gzlog << "Advertising service: " << service_name << std::endl;
-  //  srv_ = node_handle_.advertiseService(
-  //      service_name, &OctomapFromGazeboWorld::ServiceCallback, this);
-  //  octomap_publisher_ =
-  //      node_handle_.advertise<octomap_msgs::Octomap>(octomap_pub_topic, 1, true);
 }
-
-//bool OctomapFromGazeboWorld::ServiceCallback(
-//    robotino_sim::Octomap::Request& req, robotino_sim::Octomap::Response& res) {
-//  std::cout << "Creating octomap with origin at (" << req.bounding_box_origin.x
-//        << ", " << req.bounding_box_origin.y << ", "
-//        << req.bounding_box_origin.z << "), and bounding box lengths ("
-//        << req.bounding_box_lengths.x << ", " << req.bounding_box_lengths.y
-//        << ", " << req.bounding_box_lengths.z
-//        << "), and leaf size: " << req.leaf_size << ".\n";
-//  CreateOctomap(req);
-//  if (req.filename != "") {
-//    if (octomap_) {
-//      std::string path = req.filename;
-//      octomap_->writeBinary(path);
-//      std::cout << std::endl << "Octree saved as " << path << std::endl;
-//    } else {
-//      ROS_ERROR("The octree is NULL. Will not save that.");
-//    }
-//  }
-//  common::Time now = world_->GetSimTime();
-//  res.map.header.frame_id = "world";
-//  res.map.header.stamp = ros::Time(now.sec, now.nsec);
-
-//  if (!octomap_msgs::binaryMapToMsg(*octomap_, res.map)) {
-//    ROS_ERROR("Error serializing OctoMap");
-//  }
-
-//  if (req.publish_octomap) {
-//    gzlog << "Publishing Octomap." << std::endl;
-//    octomap_publisher_.publish(res.map);
-//  }
-
-//  common::SphericalCoordinatesPtr sphericalCoordinates = world_->GetSphericalCoordinates();
-//#if GAZEBO_MAJOR_VERSION >= 6
-//  ignition::math::Vector3d origin_cartesian(0.0, 0.0, 0.0);
-//  ignition::math::Vector3d origin_spherical = sphericalCoordinates->
-//      SphericalFromLocal(origin_cartesian);
-
-//  res.origin_latitude = origin_spherical.X();
-//  res.origin_longitude = origin_spherical.Y();
-//  res.origin_altitude = origin_spherical.Z();
-//  return true;
-//#else
-//  math::Vector3 origin_cartesian(0.0, 0.0, 0.0);
-//  math::Vector3 origin_spherical = sphericalCoordinates->
-//         SphericalFromLocal(origin_cartesian);
-
-//  res.origin_latitude = origin_spherical.x;
-//  res.origin_longitude = origin_spherical.y;
-//  res.origin_altitude = origin_spherical.z;
-//  return true;
-//#endif
-//}
-
-//void OctomapFromGazeboWorld::FloodFill(
-//    const math::Vector3& seed_point, const math::Vector3& bounding_box_origin,
-//    const math::Vector3& bounding_box_lengths, const double leaf_size) {
-//  octomap::OcTreeNode* seed =
-//      octomap_->search(seed_point.x, seed_point.y, seed_point.z);
-//  // do nothing if point occupied
-//  if (seed != NULL && seed->getOccupancy()) return;
-
-//  std::stack<octomath::Vector3> to_check;
-//  to_check.push(octomath::Vector3(seed_point.x, seed_point.y, seed_point.z));
-
-//  while (to_check.size() > 0) {
-//    octomath::Vector3 p = to_check.top();
-
-//    if ((p.x() > bounding_box_origin.x - bounding_box_lengths.x / 2) &&
-//        (p.x() < bounding_box_origin.x + bounding_box_lengths.x / 2) &&
-//        (p.y() > bounding_box_origin.y - bounding_box_lengths.y / 2) &&
-//        (p.y() < bounding_box_origin.y + bounding_box_lengths.y / 2) &&
-//        (p.z() > bounding_box_origin.z - bounding_box_lengths.z / 2) &&
-//        (p.z() < bounding_box_origin.z + bounding_box_lengths.z / 2) &&
-//        (!octomap_->search(p))) {
-//      octomap_->setNodeValue(p, 0);
-//      to_check.pop();
-//      to_check.push(octomath::Vector3(p.x() + leaf_size, p.y(), p.z()));
-//      to_check.push(octomath::Vector3(p.x() - leaf_size, p.y(), p.z()));
-//      to_check.push(octomath::Vector3(p.x(), p.y() + leaf_size, p.z()));
-//      to_check.push(octomath::Vector3(p.x(), p.y() - leaf_size, p.z()));
-//      to_check.push(octomath::Vector3(p.x(), p.y(), p.z() + leaf_size));
-//      to_check.push(octomath::Vector3(p.x(), p.y(), p.z() - leaf_size));
-
-//    } else {
-//      to_check.pop();
-//    }
-//  }
-//}
 
 bool OccupancyMapFromWorld::ServiceCallback(std_srvs::Empty::Request& req,
                                             std_srvs::Empty::Response& res)
 {
-  CreateOccupancyMap();
+  //CreateOccupancyMap();
+  CreateOccupiedSpace();
   return true;
 }
 
 bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_center,
                                                   const double cell_length,
-                                                  gazebo::physics::RayShapePtr ray)
+                                                  gazebo::physics::RayShapePtr ray,
+                                                  std::string &entity_name)
 {
   //check for collisions with rays surrounding the cell
   //    ---
@@ -182,7 +80,6 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
   //    ---
 
   double dist;
-  std::string entity_name;
 
   int cell_length_steps = 10;
   double side_length;
@@ -271,6 +168,63 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
   }
 }
 
+void OccupancyMapFromWorld::CreateOccupiedSpace()
+{
+  unsigned int cells_size_x = map_size_x_ / map_resolution_;
+  unsigned int cells_size_y = map_size_y_ / map_resolution_;
+  math::Vector3 map_origin(0,0,map_height_);
+
+  occupancy_map_ = new nav_msgs::OccupancyGrid();
+  occupancy_map_->data.resize(cells_size_x * cells_size_y);
+  //all cells are initially unknown
+  std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
+  occupancy_map_->header.stamp = ros::Time::now();
+  occupancy_map_->header.frame_id = "odom"; //TODO map frame
+  occupancy_map_->info.map_load_time = ros::Time(0);
+  occupancy_map_->info.resolution = map_resolution_;
+  occupancy_map_->info.width = cells_size_x;
+  occupancy_map_->info.height = cells_size_y;
+  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
+  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
+  occupancy_map_->info.origin.position.z = map_origin.z;
+  occupancy_map_->info.origin.orientation.w = 1;
+
+  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
+  engine->InitForThread();
+  gazebo::physics::RayShapePtr ray =
+      boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
+        engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
+
+  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
+  {
+    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
+    {
+      double world_x, world_y;
+      cell2world(cell_x, cell_y, map_size_x_, map_size_y_, map_resolution_,
+                 world_x, world_y);
+
+      std::string collision_entity;
+      bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
+                                                 map_resolution_, ray, collision_entity);
+
+      if(cell_occupied)
+      {
+        unsigned int cell_index;
+        cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+        //mark cell as occupied
+        occupancy_map_->data.at(cell_index) = 100;
+      }
+    }
+  }
+  map_pub_.publish(*occupancy_map_);
+  std::cout << "\rOccupied space generation completed                  " << std::endl;
+}
+
+void OccupancyMapFromWorld::GetCellNeighborCounts()
+{
+
+}
+
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   //TODO map origin different from (0,0)
@@ -353,8 +307,9 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
             cell2world(cell_x + i, cell_y + j, map_size_x_, map_size_y_, map_resolution_,
                        world_x, world_y);
 
+            std::string collision_entity;
             bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
-                                                       map_resolution_, ray);
+                                                       map_resolution_, ray, collision_entity);
 
             if(cell_occupied)
               //mark cell as occupied

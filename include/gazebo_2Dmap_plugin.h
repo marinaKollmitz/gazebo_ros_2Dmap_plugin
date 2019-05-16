@@ -60,7 +60,7 @@ class OccupancyMapFromWorld : public WorldPlugin {
   void Load(physics::WorldPtr _parent, sdf::ElementPtr _sdf);
 
   bool worldCellIntersection(const math::Vector3& cell_center, const double cell_length,
-                             gazebo::physics::RayShapePtr ray);
+                             gazebo::physics::RayShapePtr ray, std::string &entity_name);
 
 //  void FloodFill(const math::Vector3& seed_point,
 //                 const math::Vector3& bounding_box_origin,
@@ -70,6 +70,10 @@ class OccupancyMapFromWorld : public WorldPlugin {
   /*! \brief
   */
   void CreateOccupancyMap();
+
+  void GetCellNeighborCounts();
+
+  void CreateOccupiedSpace();
 
   static void cell2world(unsigned int cell_x, unsigned int cell_y,
                          double map_size_x, double map_size_y, double map_resolution,
