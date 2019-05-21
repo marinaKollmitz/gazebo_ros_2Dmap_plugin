@@ -35,6 +35,7 @@
 #include <std_srvs/Empty.h>
 #include <costmap_2d/costmap_2d_ros.h>
 #include <std_srvs/Empty.h>
+#include <nav_msgs/OccupancyGrid.h>
 
 namespace gazebo {
 
@@ -71,7 +72,9 @@ class OccupancyMapFromWorld : public WorldPlugin {
   */
   void CreateOccupancyMap();
 
-  void GetCellNeighborCounts();
+  void GetCellNeighborCounts(nav_msgs::OccupancyGrid* map);
+
+  void FilterOccupied(nav_msgs::OccupancyGrid* map);
 
   void CreateOccupiedSpace();
 
