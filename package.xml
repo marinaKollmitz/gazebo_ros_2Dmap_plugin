@@ -19,6 +19,8 @@
   <build_depend>rospy</build_depend>
   <build_depend>tf</build_depend>
   <build_depend>xacro</build_depend>
+  <build_depend>message_generation</build_depend>
+  <run_depend>message_runtime</run_depend>  
   <run_depend>gazebo_msgs</run_depend>
   <run_depend>gazebo_ros</run_depend>
   <run_depend>gazebo_ros_control</run_depend>

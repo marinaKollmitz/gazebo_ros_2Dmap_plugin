@@ -39,33 +39,117 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("map", 1);
   map_service_ = nh_.advertiseService(
         "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::ServiceCallback, this);
-
-  map_resolution_ = 0.1;
-
-  if(_sdf->HasElement("map_resolution"))
-    map_resolution_ = _sdf->GetElement("map_resolution")->Get<double>();
-
-  map_height_ = 0.3;
-
-  if(_sdf->HasElement("map_z"))
-    map_height_ = _sdf->GetElement("map_z")->Get<double>();
-
-  map_size_x_ = 10.0;
-
-  if(_sdf->HasElement("map_size_x"))
-    map_size_x_ = _sdf->GetElement("map_size_x")->Get<double>();
-
-  map_size_y_ = 10.0;
-
-  if(_sdf->HasElement("map_size_y"))
-    map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
 }
 
-bool OccupancyMapFromWorld::ServiceCallback(std_srvs::Empty::Request& req,
-                                            std_srvs::Empty::Response& res)
+bool OccupancyMapFromWorld::ServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
+                                            gazebo_ros_2Dmap_plugin::GenerateMap::Response& res)
 {
-  //CreateOccupancyMap();
-  CreateOccupiedSpace();
+  std::cout << "generate map service call received" << std::endl;
+
+  ros::Time now = ros::Time::now();
+
+  uint32_t cells_size_x = req.size_x / req.resolution;
+  uint32_t cells_size_y = req.size_y / req.resolution;
+
+  nav_msgs::OccupancyGrid* occupancy_map = new nav_msgs::OccupancyGrid();
+  occupancy_map->data.resize(cells_size_x * cells_size_y);
+
+  //all cells are initially unknown
+  std::fill(occupancy_map->data.begin(), occupancy_map->data.end(), CellUnknown);
+  occupancy_map->header.stamp = ros::Time::now();
+  occupancy_map->header.frame_id = "odom"; //TODO map frame
+  occupancy_map->info.map_load_time = ros::Time(0);
+  occupancy_map->info.resolution = req.resolution;
+  occupancy_map->info.width = cells_size_x;
+  occupancy_map->info.height = cells_size_y;
+  occupancy_map->info.origin = req.origin;
+
+  MarkOccupiedCells(occupancy_map);
+
+//  map_pub_.publish(*occupancy_map);
+//  sleep(2);
+//  std::cout << "published occupancy map" << std::endl;
+//  sleep(2);
+//  std::cout << "pause over " << std::endl;
+//  GetFreeSpace(occupancy_map);
+
+//  map_pub_.publish(*occupancy_map);
+//  sleep(2);
+
+//  FilterOccupied(occupancy_map);
+
+//  map_pub_.publish(*occupancy_map);
+//  sleep(2);
+
+//  if(CreateOccupiedSpace())
+//  {
+//    res.success = true;
+//    res.map = *occupancy_map_;
+//    ros::Duration dur = ros::Time::now() - now;
+//    std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
+//  }
+
+//  else
+//    res.success = false;
+
+  occupancy_map->info.origin.position.x -= req.size_x/2;
+  occupancy_map->info.origin.position.y -= req.size_y/2;
+
+//  map_pub_.publish(*occupancy_map);
+//  sleep(2);
+
+  res.map = *occupancy_map;
+  res.success = true;
+
+  std::cout << "sending response " << std::endl;
+
+  return true;
+}
+
+bool OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map)
+{
+  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
+  engine->InitForThread();
+  gazebo::physics::RayShapePtr ray =
+      boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
+        engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
+
+  uint32_t cells_size_x = map->info.width;
+  uint32_t cells_size_y = map->info.height;
+  double map_resolution = map->info.resolution;
+  double map_size_x = map->info.width * map->info.resolution;
+  double map_size_y = map->info.height * map->info.resolution;
+  double map_height = map->info.origin.position.z;
+
+  for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
+  {
+    for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
+    {
+      double world_x, world_y;
+      //TODO cell2world muss map origin beachten?
+      cell2world(cell_x, cell_y, map_size_x, map_size_y, map_resolution,
+                 map->info.origin.position, world_x, world_y);
+
+      std::string collision_entity;
+      bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height),
+                                                 map_resolution, ray, collision_entity);
+
+      if(cell_occupied)
+      {
+        unsigned int cell_index;
+        cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+        //mark cell as occupied
+        map->data.at(cell_index) = CellOccupied;
+      }
+    }
+  }
+
+  std::cout << "occupied space marked" << std::endl;
+
+  map_pub_.publish(*map);
+//  sleep(5);
+
+  std::cout << "return true" << std::endl;
   return true;
 }
 
@@ -81,7 +165,7 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
 
   double dist;
 
-  int cell_length_steps = 10;
+  int cell_length_steps = 2;
   double side_length;
 
   //check for collisions with beams at increasing sizes to capture smaller
@@ -118,201 +202,13 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
   return false;
 }
 
-void OccupancyMapFromWorld::cell2world(unsigned int cell_x, unsigned int cell_y,
-                                       double map_size_x, double map_size_y,
-                                       double map_resolution,
-                                       double& world_x, double &world_y)
+void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
 {
-  world_x = cell_x * map_resolution - map_size_x/2 + map_resolution/2;
-  world_y = cell_y * map_resolution - map_size_y/2 + map_resolution/2;
-}
-
-void OccupancyMapFromWorld::world2cell(double world_x, double world_y,
-                                       double map_size_x, double map_size_y,
-                                       double map_resolution,
-                                       unsigned int& cell_x, unsigned int& cell_y)
-{
-  cell_x = (world_x + map_size_x/2) / map_resolution;
-  cell_y = (world_y + map_size_y/2) / map_resolution;
-}
-
-bool OccupancyMapFromWorld::cell2index(int cell_x, int cell_y,
-                                       unsigned int cell_size_x, unsigned int cell_size_y,
-                                       unsigned int& map_index)
-{
-  if(cell_x >= 0 && cell_x < cell_size_x && cell_y >= 0 && cell_y < cell_size_y)
-  {
-    map_index = cell_y * cell_size_x + cell_x;
-    return true;
-  }
-  else
-  {
-    //return false when outside map bounds
-    return false;
-  }
-}
-
-bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
-                                       unsigned int cell_size_y,
-                                       unsigned int& cell_x, unsigned int& cell_y)
-{
-  cell_x = index % cell_size_x;
-  cell_y = index / cell_size_x;
-
-  if(cell_x >= 0 && cell_x < cell_size_x && cell_y >= 0 && cell_y < cell_size_y)
-    return true;
-  else
-  {
-    //return false when outside map bounds
-    return false;
-  }
-}
-
-void OccupancyMapFromWorld::CreateOccupiedSpace()
-{
-  unsigned int cells_size_x = map_size_x_ / map_resolution_;
-  unsigned int cells_size_y = map_size_y_ / map_resolution_;
-  math::Vector3 map_origin(0,0,map_height_);
-
-  occupancy_map_ = new nav_msgs::OccupancyGrid();
-  occupancy_map_->data.resize(cells_size_x * cells_size_y);
-  //all cells are initially unknown
-  std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
-  occupancy_map_->header.stamp = ros::Time::now();
-  occupancy_map_->header.frame_id = "odom"; //TODO map frame
-  occupancy_map_->info.map_load_time = ros::Time(0);
-  occupancy_map_->info.resolution = map_resolution_;
-  occupancy_map_->info.width = cells_size_x;
-  occupancy_map_->info.height = cells_size_y;
-  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
-  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
-  occupancy_map_->info.origin.position.z = map_origin.z;
-  occupancy_map_->info.origin.orientation.w = 1;
-
-  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
-  engine->InitForThread();
-  gazebo::physics::RayShapePtr ray =
-      boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
-        engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
-
-  int min_cell_x = cells_size_x, min_cell_y = cells_size_y;
-  int max_cell_x = 0, max_cell_y = 0;
-
-  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
-  {
-    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
-    {
-      double world_x, world_y;
-      cell2world(cell_x, cell_y, map_size_x_, map_size_y_, map_resolution_,
-                 world_x, world_y);
-
-      std::string collision_entity;
-      bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
-                                                 map_resolution_, ray, collision_entity);
-
-      if(cell_occupied)
-      {
-        unsigned int cell_index;
-        cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-        //mark cell as occupied
-        occupancy_map_->data.at(cell_index) = 100;
-        //check if ray collides with a wall to get map boundaries
-        if(collision_entity.find("fr") != std::string::npos)
-        {
-          if(cell_x < min_cell_x)
-            min_cell_x = cell_x;
-          if(cell_y < min_cell_y)
-            min_cell_y = cell_y;
-          if(cell_x > max_cell_x)
-            max_cell_x = cell_x;
-          if(cell_y > max_cell_y)
-            max_cell_y = cell_y;
-        }
-      }
-    }
-  }
-
-//  std::cout << "occupied cells generated " << std::endl;
-//  map_pub_.publish(*occupancy_map_);
-//  sleep(10);
-
-
-
-  int map_padding = 10;
-  min_cell_x = std::max(min_cell_x-map_padding, 0);
-  min_cell_y = std::max(min_cell_y-map_padding, 0);
-  max_cell_x = std::min(max_cell_x+map_padding, (int)cells_size_x-1);
-  max_cell_y = std::min(max_cell_y+map_padding, (int)cells_size_y-1);
-
-  std::cout << "min: " << min_cell_x << " " << min_cell_y << std::endl;
-  std::cout << "max: " << max_cell_x << " " << max_cell_y << std::endl;
-
-//  unsigned int cell_index;
-//  cell2index(max_cell_x, max_cell_y, cells_size_x, cells_size_y, cell_index);
-//  occupancy_map_->data.at(cell_index) = 200;
-
-//  map_pub_.publish(*occupancy_map_);
-//  std::cout << "generated occupied space" << std::endl;
-//  sleep(5);
-
-  //crop occupancy map to wall bounds
-  nav_msgs::OccupancyGrid* cropped_occupancy_map = new nav_msgs::OccupancyGrid();
-  cropped_occupancy_map->header = occupancy_map_->header;
-  cropped_occupancy_map->info = occupancy_map_->info;
-  cropped_occupancy_map->info.width = max_cell_x - min_cell_x + 1;
-  cropped_occupancy_map->info.height = max_cell_y - min_cell_y + 1;
-  cropped_occupancy_map->info.origin.position.x =
-      occupancy_map_->info.origin.position.x + min_cell_x*map_resolution_;
-  cropped_occupancy_map->info.origin.position.y =
-      occupancy_map_->info.origin.position.y + min_cell_y*map_resolution_;
-
-  unsigned int cell_x, cell_y;
-  for(int cell_index=0; cell_index<occupancy_map_->data.size(); cell_index++)
-  {
-    index2cell(cell_index, cells_size_x, cells_size_y, cell_x, cell_y);
-    if(cell_x >= min_cell_x && cell_x <= max_cell_x &&
-       cell_y >= min_cell_y && cell_y <= max_cell_y)
-    {
-      cropped_occupancy_map->data.push_back(occupancy_map_->data.at(cell_index));
-    }
-  }
-
-//  std::cout << "\r occupied cells generation completed " << std::endl;
-//  map_pub_.publish(*occupancy_map_);
-//  sleep(10);
-
-  occupancy_map_ = cropped_occupancy_map;
-  std::cout << "\r cropped map generation completed " << std::endl;
-
-  unsigned int cell_index;
-  cell2index(0, 10, occupancy_map_->info.width, occupancy_map_->info.height, cell_index);
-  occupancy_map_->data.at(cell_index) = 200;
-
-  map_pub_.publish(*occupancy_map_);
-  sleep(20);
-
-  GetCellNeighborCounts(occupancy_map_);
-
-  std::cout << "\rGet Cell Neighbor Counts completed                  " << std::endl;
-
-  map_pub_.publish(*occupancy_map_);
-  sleep(20);
-
-  FilterOccupied(occupancy_map_);
-  std::cout << "\rOccupied space filtering completed                  " << std::endl;
-
-  map_pub_.publish(*occupancy_map_);
+  std::cout << "marking free space " << std::endl;
   sleep(2);
 
-}
-
-void OccupancyMapFromWorld::GetCellNeighborCounts(nav_msgs::OccupancyGrid* map)
-{
   unsigned int cells_size_x = map->info.width;
   unsigned int cells_size_y = map->info.height;
-
-  std::cout << "cells_size_x: " << cells_size_x << std::endl;
-  std::cout << "cells_size_y: " << cells_size_y << std::endl;
 
   int8_t visited = 50; //value for marking visited cells
   int8_t unknown_placeholder = 200; //placeholder value for marking unknown cells
@@ -370,14 +266,12 @@ void OccupancyMapFromWorld::GetCellNeighborCounts(nav_msgs::OccupancyGrid* map)
 
                   //add cell to wavefront
                   wavefront.push_back(child_index);
+
+                  map_pub_.publish(*map);
                 }
               }
             }
           }
-
-          map_pub_.publish(*map);
-//          ros::Duration(0.2).sleep();
-
         }//end wavefront loop
 
         //count connected cells
@@ -454,115 +348,6 @@ void OccupancyMapFromWorld::FilterOccupied(nav_msgs::OccupancyGrid* map)
       }
     }
   }
-}
-
-void OccupancyMapFromWorld::CreateOccupancyMap()
-{
-  //TODO map origin different from (0,0)
-  math::Vector3 map_origin(0,0,map_height_);
-
-  unsigned int cells_size_x = map_size_x_ / map_resolution_;
-  unsigned int cells_size_y = map_size_y_ / map_resolution_;
-
-  occupancy_map_ = new nav_msgs::OccupancyGrid();
-  occupancy_map_->data.resize(cells_size_x * cells_size_y);
-  //all cells are initially unknown
-  std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
-  occupancy_map_->header.stamp = ros::Time::now();
-  occupancy_map_->header.frame_id = "odom"; //TODO map frame
-  occupancy_map_->info.map_load_time = ros::Time(0);
-  occupancy_map_->info.resolution = map_resolution_;
-  occupancy_map_->info.width = cells_size_x;
-  occupancy_map_->info.height = cells_size_y;
-  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
-  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
-  occupancy_map_->info.origin.position.z = map_origin.z;
-  occupancy_map_->info.origin.orientation.w = 1;
-
-  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
-  engine->InitForThread();
-  gazebo::physics::RayShapePtr ray =
-      boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
-        engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
-
-  std::cout << "Starting wavefront expansion for mapping" << std::endl;
-
-  //identify free space by spreading out from initial robot cell
-  double robot_x = 0;
-  double robot_y = 0;
-
-  //find initial robot cell
-  unsigned int cell_x, cell_y, map_index;
-  world2cell(robot_x, robot_y, map_size_x_, map_size_y_, map_resolution_,
-             cell_x, cell_y);
-
-  if(!cell2index(cell_x, cell_y, cells_size_x, cells_size_y, map_index))
-  {
-    ROS_ERROR_NAMED(name_, "initial robot pos is outside map, could not create "
-                           "map");
-    return;
-  }
-
-  std::vector<unsigned int> wavefront;
-  wavefront.push_back(map_index);
-
-  //wavefront expansion for identifying free, unknown and occupied cells
-  while(!wavefront.empty())
-  {
-    map_index = wavefront.at(0);
-    wavefront.erase(wavefront.begin());
-
-    index2cell(map_index, cells_size_x, cells_size_y, cell_x, cell_y);
-
-    //mark cell as free
-    occupancy_map_->data.at(map_index) = 0;
-
-    //explore cells neighbors in an 8-connected grid
-    unsigned int child_index;
-    double world_x, world_y;
-    int8_t child_val;
-
-    //8-connected grid
-    for(int i=-1; i<2; i++)
-    {
-      for(int j=-1; j<2; j++)
-      {
-        //makes sure index is inside map bounds
-        if(cell2index(cell_x + i, cell_y + j, cells_size_x, cells_size_y, child_index))
-        {
-          child_val = occupancy_map_->data.at(child_index);
-
-          //only update value if cell is unknown
-          if(child_val != 100 && child_val != 0 && child_val != 50)
-          {
-            cell2world(cell_x + i, cell_y + j, map_size_x_, map_size_y_, map_resolution_,
-                       world_x, world_y);
-
-            std::string collision_entity;
-            bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
-                                                       map_resolution_, ray, collision_entity);
-
-            if(cell_occupied)
-              //mark cell as occupied
-              occupancy_map_->data.at(child_index) = 100;
-
-
-            else
-            {
-              //add cell to wavefront
-              wavefront.push_back(child_index);
-              //mark wavefront in map so we don't add children to wavefront multiple
-              //times
-              occupancy_map_->data.at(child_index) = 50;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  map_pub_.publish(*occupancy_map_);
-  std::cout << "\rOccupancy Map generation completed                  " << std::endl;
 }
 
 // Register this plugin with the simulator

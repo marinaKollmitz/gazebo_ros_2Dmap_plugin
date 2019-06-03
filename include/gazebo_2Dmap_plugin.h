@@ -34,8 +34,8 @@
 #include <sdf/sdf.hh>
 #include <std_srvs/Empty.h>
 #include <costmap_2d/costmap_2d_ros.h>
-#include <std_srvs/Empty.h>
 #include <nav_msgs/OccupancyGrid.h>
+#include <gazebo_ros_2Dmap_plugin/GenerateMap.h>
 
 namespace gazebo {
 
@@ -62,51 +62,79 @@ class OccupancyMapFromWorld : public WorldPlugin {
 
   bool worldCellIntersection(const math::Vector3& cell_center, const double cell_length,
                              gazebo::physics::RayShapePtr ray, std::string &entity_name);
-
-//  void FloodFill(const math::Vector3& seed_point,
-//                 const math::Vector3& bounding_box_origin,
-//                 const math::Vector3& bounding_box_lengths,
-//                 const double leaf_size);
   
-  /*! \brief
-  */
-  void CreateOccupancyMap();
+  bool CreateOccupancyMap(const math::Vector3& map_origin,
+                          double map_size_x, double map_size_y,
+                          double map_resolution);
 
-  void GetCellNeighborCounts(nav_msgs::OccupancyGrid* map);
+  bool MarkOccupiedCells(nav_msgs::OccupancyGrid* map);
+
+  void GetFreeSpace(nav_msgs::OccupancyGrid* map);
 
   void FilterOccupied(nav_msgs::OccupancyGrid* map);
 
-  void CreateOccupiedSpace();
+  bool CreateOccupiedSpace();
 
   static void cell2world(unsigned int cell_x, unsigned int cell_y,
                          double map_size_x, double map_size_y, double map_resolution,
-                         double& world_x, double &world_y);
+                         geometry_msgs::Point map_origin, double& world_x, double &world_y)
+  {
+    world_x = cell_x * map_resolution - map_size_x/2 + map_resolution/2 + map_origin.x;
+    world_y = cell_y * map_resolution - map_size_y/2 + map_resolution/2 + map_origin.y;
+  }
 
   static void world2cell(double world_x, double world_y,
                          double map_size_x, double map_size_y, double map_resolution,
-                         unsigned int& cell_x, unsigned int& cell_y);
+                         unsigned int& cell_x, unsigned int& cell_y)
+  {
+    cell_x = (world_x + map_size_x/2) / map_resolution;
+    cell_y = (world_y + map_size_y/2) / map_resolution;
+  }
 
   static bool cell2index(int cell_x, int cell_y,
                          unsigned int cell_size_x, unsigned int cell_size_y,
-                         unsigned int& map_index);
+                         unsigned int& map_index)
+  {
+    if(cell_x >= 0 && cell_x < cell_size_x && cell_y >= 0 && cell_y < cell_size_y)
+    {
+      map_index = cell_y * cell_size_x + cell_x;
+      return true;
+    }
+    else
+    {
+      //return false when outside map bounds
+      return false;
+    }
+  }
 
   static bool index2cell(int index, unsigned int cell_size_x, unsigned int cell_size_y,
-                         unsigned int& cell_x, unsigned int& cell_y);
+                         unsigned int& cell_x, unsigned int& cell_y)
+  {
+    cell_x = index % cell_size_x;
+    cell_y = index / cell_size_x;
+
+    if(cell_x >= 0 && cell_x < cell_size_x && cell_y >= 0 && cell_y < cell_size_y)
+      return true;
+    else
+    {
+      //return false when outside map bounds
+      return false;
+    }
+  }
 
  private:
-  bool ServiceCallback(std_srvs::Empty::Request& req,
-                       std_srvs::Empty::Response& res);
+  bool ServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
+                       gazebo_ros_2Dmap_plugin::GenerateMap::Response& res);
 
   physics::WorldPtr world_;
   ros::NodeHandle nh_;
   ros::ServiceServer map_service_;
   ros::Publisher map_pub_;
-  nav_msgs::OccupancyGrid* occupancy_map_;
   std::string name_;
-  double map_resolution_;
-  double map_height_;
-  double map_size_x_;
-  double map_size_y_;
+
+  const int8_t CellUnknown = -1;
+  const int8_t CellFree = 0;
+  const int8_t CellOccupied = 100;
 };
 
 } // namespace gazebo

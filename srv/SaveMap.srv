@@ -1,0 +1,4 @@
+string map_path
+nav_msgs/OccupancyGrid map
+---
+bool success
