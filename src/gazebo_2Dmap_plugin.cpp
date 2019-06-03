@@ -149,6 +149,9 @@ bool OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map)
   map_pub_.publish(*map);
 //  sleep(5);
 
+  //Reset call necessary to avoid gazebo segmentation fault
+  engine->Reset();
+
   std::cout << "return true" << std::endl;
   return true;
 }
