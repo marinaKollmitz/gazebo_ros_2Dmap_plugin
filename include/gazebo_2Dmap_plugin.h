@@ -36,6 +36,7 @@
 #include <costmap_2d/costmap_2d_ros.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <gazebo_ros_2Dmap_plugin/GenerateMap.h>
+#include <boost/regex.h>
 
 namespace gazebo {
 
@@ -60,20 +61,36 @@ class OccupancyMapFromWorld : public WorldPlugin {
   /// \param[in] _sdf SDF element that describes the plugin.
   void Load(physics::WorldPtr _parent, sdf::ElementPtr _sdf);
 
-  bool worldCellIntersection(const math::Vector3& cell_center, const double cell_length,
-                             gazebo::physics::RayShapePtr ray, std::string &entity_name);
+  bool worldCellIntersection(const double cell_center_x, const double cell_center_y,
+                             const double min_z, const double max_z,
+                             const double cell_length, gazebo::physics::RayShapePtr ray,
+                             std::string &entity_name);
   
   bool CreateOccupancyMap(const math::Vector3& map_origin,
                           double map_size_x, double map_size_y,
                           double map_resolution);
 
-  bool MarkOccupiedCells(nav_msgs::OccupancyGrid* map);
+  void MarkOccupiedCells(nav_msgs::OccupancyGrid* map, double min_z, double max_z);
 
   void GetFreeSpace(nav_msgs::OccupancyGrid* map);
 
   void FilterOccupied(nav_msgs::OccupancyGrid* map);
 
   bool CreateOccupiedSpace();
+
+  bool IsCeiling(const std::string entity)
+  {
+    boost::regex expr{"fr_\\d+rm_\\d+c"};
+
+    return boost::regex_match(entity, expr);
+  }
+
+  bool IsFloor(const std::string entity)
+  {
+    boost::regex expr{"fr_\\d+rm_\\d+f"};
+    boost::smatch res;
+    return boost::regex_search(entity, res, expr);
+  }
 
   static void cell2world(unsigned int cell_x, unsigned int cell_y,
                          double map_size_x, double map_size_y, double map_resolution,
@@ -123,12 +140,15 @@ class OccupancyMapFromWorld : public WorldPlugin {
   }
 
  private:
-  bool ServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
-                       gazebo_ros_2Dmap_plugin::GenerateMap::Response& res);
+  bool OccServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
+                          gazebo_ros_2Dmap_plugin::GenerateMap::Response& res);
+  bool ColServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
+                          gazebo_ros_2Dmap_plugin::GenerateMap::Response& res);
 
   physics::WorldPtr world_;
   ros::NodeHandle nh_;
-  ros::ServiceServer map_service_;
+  ros::ServiceServer occ_map_service_;
+  ros::ServiceServer col_map_service_;
   ros::Publisher map_pub_;
   std::string name_;
 

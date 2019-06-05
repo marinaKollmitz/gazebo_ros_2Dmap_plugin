@@ -37,14 +37,23 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   world_ = _parent;
 
   map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("map", 1);
-  map_service_ = nh_.advertiseService(
-        "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::ServiceCallback, this);
+  occ_map_service_ = nh_.advertiseService(
+        "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::OccServiceCallback, this);
+
+  col_map_service_ = nh_.advertiseService(
+        "gazebo_2Dmap_plugin/generate_collision_map", &OccupancyMapFromWorld::ColServiceCallback,
+        this);
 }
 
-bool OccupancyMapFromWorld::ServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
-                                            gazebo_ros_2Dmap_plugin::GenerateMap::Response& res)
+bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
+                                               gazebo_ros_2Dmap_plugin::GenerateMap::Response& res)
 {
-  std::cout << "generate map service call received" << std::endl;
+  std::cout << "generate occupancy map service call received" << std::endl;
+  if(req.size_z != 0.0)
+  {
+    ROS_WARN("non-zero map size_z accountered in occupancy service callback, "
+             "will be ignored. Did you want to generate a collision map instead?");
+  }
 
   ros::Time now = ros::Time::now();
 
@@ -64,49 +73,72 @@ bool OccupancyMapFromWorld::ServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap
   occupancy_map->info.height = cells_size_y;
   occupancy_map->info.origin = req.origin;
 
-  MarkOccupiedCells(occupancy_map);
-
-//  map_pub_.publish(*occupancy_map);
-//  sleep(2);
-//  std::cout << "published occupancy map" << std::endl;
-//  sleep(2);
-//  std::cout << "pause over " << std::endl;
-//  GetFreeSpace(occupancy_map);
-
-//  map_pub_.publish(*occupancy_map);
-//  sleep(2);
-
-//  FilterOccupied(occupancy_map);
-
-//  map_pub_.publish(*occupancy_map);
-//  sleep(2);
-
-//  if(CreateOccupiedSpace())
-//  {
-//    res.success = true;
-//    res.map = *occupancy_map_;
-//    ros::Duration dur = ros::Time::now() - now;
-//    std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
-//  }
-
-//  else
-//    res.success = false;
+  MarkOccupiedCells(occupancy_map, occupancy_map->info.origin.position.z,
+                    occupancy_map->info.origin.position.z);
+  GetFreeSpace(occupancy_map);
+  FilterOccupied(occupancy_map);
 
   occupancy_map->info.origin.position.x -= req.size_x/2;
   occupancy_map->info.origin.position.y -= req.size_y/2;
 
-//  map_pub_.publish(*occupancy_map);
-//  sleep(2);
-
   res.map = *occupancy_map;
   res.success = true;
 
-  std::cout << "sending response " << std::endl;
+  map_pub_.publish(*occupancy_map);
+
+  ros::Duration dur = ros::Time::now() - now;
+  std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
 
   return true;
 }
 
-bool OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map)
+bool OccupancyMapFromWorld::ColServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
+                                               gazebo_ros_2Dmap_plugin::GenerateMap::Response& res)
+{
+  std::cout << "generate collision map service call received" << std::endl;
+  if(req.size_z == 0.0)
+  {
+    ROS_WARN("zero map size_z accountered in collision map service callback, "
+             "Did you want to generate an occupancy map instead?");
+  }
+
+  ros::Time now = ros::Time::now();
+
+  uint32_t cells_size_x = req.size_x / req.resolution;
+  uint32_t cells_size_y = req.size_y / req.resolution;
+
+  nav_msgs::OccupancyGrid* occupancy_map = new nav_msgs::OccupancyGrid();
+  occupancy_map->data.resize(cells_size_x * cells_size_y);
+
+  //all cells are initially free
+  std::fill(occupancy_map->data.begin(), occupancy_map->data.end(), CellFree);
+  occupancy_map->header.stamp = ros::Time::now();
+  occupancy_map->header.frame_id = "odom"; //TODO map frame
+  occupancy_map->info.map_load_time = ros::Time(0);
+  occupancy_map->info.resolution = req.resolution;
+  occupancy_map->info.width = cells_size_x;
+  occupancy_map->info.height = cells_size_y;
+  occupancy_map->info.origin = req.origin;
+
+  MarkOccupiedCells(occupancy_map, occupancy_map->info.origin.position.z - req.size_z/2,
+                    occupancy_map->info.origin.position.z + req.size_z/2);
+
+  occupancy_map->info.origin.position.x -= req.size_x/2;
+  occupancy_map->info.origin.position.y -= req.size_y/2;
+
+  res.map = *occupancy_map;
+  res.success = true;
+
+  map_pub_.publish(*occupancy_map);
+
+  ros::Duration dur = ros::Time::now() - now;
+  std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
+
+  return true;
+}
+
+void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
+                                              double min_z, double max_z)
 {
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
   engine->InitForThread();
@@ -119,7 +151,6 @@ bool OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map)
   double map_resolution = map->info.resolution;
   double map_size_x = map->info.width * map->info.resolution;
   double map_size_y = map->info.height * map->info.resolution;
-  double map_height = map->info.origin.position.z;
 
   for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
   {
@@ -131,7 +162,7 @@ bool OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map)
                  map->info.origin.position, world_x, world_y);
 
       std::string collision_entity;
-      bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height),
+      bool cell_occupied = worldCellIntersection(world_x, world_y, min_z, max_z,
                                                  map_resolution, ray, collision_entity);
 
       if(cell_occupied)
@@ -146,29 +177,22 @@ bool OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map)
 
   std::cout << "occupied space marked" << std::endl;
 
-  map_pub_.publish(*map);
-//  sleep(5);
-
   //Reset call necessary to avoid gazebo segmentation fault
   engine->Reset();
 
-  std::cout << "return true" << std::endl;
-  return true;
+  return;
 }
 
-bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_center,
+bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,
+                                                  const double cell_center_y,
+                                                  const double min_z, const double max_z,
                                                   const double cell_length,
                                                   gazebo::physics::RayShapePtr ray,
                                                   std::string &entity_name)
 {
-  //check for collisions with rays surrounding the cell
-  //    ---
-  //   | + |
-  //    ---
-
   double dist;
 
-  int cell_length_steps = 2;
+  int cell_length_steps = 5;
   double side_length;
 
   //check for collisions with beams at increasing sizes to capture smaller
@@ -177,26 +201,52 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
   {
     side_length = cell_length / cell_length_steps * step;
 
-    for(int i=-1; i<2; i+=2)
+    for(int i=-1; i<=1; i+=2)
     {
-      double start_x = cell_center.x + i * side_length/2;
-      double start_y = cell_center.y - i * side_length/2;
-
-      for(int j=-1; j<2; j+=2)
+      for(int j=-1; j<=1; j+=2)
       {
-        double end_x = cell_center.x + j * side_length/2;
-        double end_y = cell_center.y + j * side_length/2;
+        double start_x, start_y, end_x, end_y;
 
-        //      std::cout << "start_x" << start_x << std::endl;
-        //      std::cout << "start_y" << start_y << std::endl;
-        //      std::cout << "end_x" << end_x << std::endl;
-        //      std::cout << "end_y" << end_y << std::endl;
+        if(max_z == min_z)
+        {
+          //for collision in one layer, check rays surrounding the cell
+          //   + - +
+          //   |   |
+          //   + - +
+          start_x = cell_center_x + i * side_length/2;
+          start_y = cell_center_y - i * side_length/2;
+          end_x = cell_center_x + j * side_length/2;
+          end_y = cell_center_y + j * side_length/2;
+        }
+        else
+        {
+          //for collisions at different heights, check rays going up in z-direction
+          //      |    |
+          //    | |  | |
+          //    | + -| +
+          //    |/   |/
+          //    + -- +
+          start_x = cell_center_x + i * side_length/2;
+          start_y = cell_center_y + j * side_length/2;
+          end_x = cell_center_x - j * side_length/2;
+          end_y = cell_center_y - j * side_length/2;
+        }
 
-        ray->SetPoints(math::Vector3(start_x, start_y, cell_center.z),
-                       math::Vector3(end_x, end_y, cell_center.z));
+//        std::cout << "i: " << i << " j: " << j << std::endl;
+//        std::cout << "start: " << start_x << " " << start_y << std::endl;
+//        std::cout << "end: " << end_x << " " << end_y << std::endl;
+
+        ray->SetPoints(math::Vector3(start_x, start_y, max_z),
+                       math::Vector3(end_x, end_y, min_z));
         ray->GetIntersection(dist, entity_name);
 
-        if(!entity_name.empty())
+//        if(!entity_name.empty())
+//          std::cout << "entity name: " << entity_name << std::endl;
+
+        if(IsFloor(entity_name))
+          std::cout << "hit the floor" << std::endl;
+
+        if(!entity_name.empty() && !IsFloor(entity_name) && !IsCeiling(entity_name))
           return true;
       }
     }
@@ -208,7 +258,6 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
 void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
 {
   std::cout << "marking free space " << std::endl;
-  sleep(2);
 
   unsigned int cells_size_x = map->info.width;
   unsigned int cells_size_y = map->info.height;
@@ -269,8 +318,6 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
 
                   //add cell to wavefront
                   wavefront.push_back(child_index);
-
-                  map_pub_.publish(*map);
                 }
               }
             }
