@@ -161,9 +161,8 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
       cell2world(cell_x, cell_y, map_size_x, map_size_y, map_resolution,
                  map->info.origin.position, world_x, world_y);
 
-      std::string collision_entity;
       bool cell_occupied = worldCellIntersection(world_x, world_y, min_z, max_z,
-                                                 map_resolution, ray, collision_entity);
+                                                 map_resolution, ray);
 
       if(cell_occupied)
       {
@@ -187,10 +186,10 @@ bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,
                                                   const double cell_center_y,
                                                   const double min_z, const double max_z,
                                                   const double cell_length,
-                                                  gazebo::physics::RayShapePtr ray,
-                                                  std::string &entity_name)
+                                                  gazebo::physics::RayShapePtr ray)
 {
   double dist;
+  std::string entity_name;
 
   int cell_length_steps = 5;
   double side_length;
@@ -255,6 +254,7 @@ bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,
   return false;
 }
 
+//TODO make method nicer
 void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
 {
   std::cout << "marking free space " << std::endl;
@@ -266,7 +266,17 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
   int8_t unknown_placeholder = 200; //placeholder value for marking unknown cells
   int8_t free_space = 0;
   int8_t unknown_space = -1;
+  int8_t robot_space = 10;
 
+  double target_robot_height = 1.0;
+  double min_room_size = std::pow(2/map->info.resolution, 2); //min room size is 2 square meters
+
+  nav_msgs::OccupancyGrid* col_map = new nav_msgs::OccupancyGrid(*map);
+  MarkOccupiedCells(col_map, col_map->info.origin.position.z,
+                    col_map->info.origin.position.z + target_robot_height);
+
+  //mark which cells in the collision map are connected to enough cells so
+  //the robot could actually be in that space and start mapping
   for(int cell_x=0; cell_x<cells_size_x; cell_x++)
   {
     for(int cell_y=0; cell_y<cells_size_y; cell_y++)
@@ -275,7 +285,7 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
       cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
 
       //compute number of connected cells if cell value is unknown
-      if(map->data.at(cell_index) == -1)
+      if(col_map->data.at(cell_index) == -1)
       {
         //wavefront expansion to count number of cells
         std::vector<unsigned int> wavefront;
@@ -283,7 +293,95 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
 
         wavefront.push_back(cell_index);
         connected_list.push_back(cell_index);
-        map->data.at(cell_index) = visited;
+        col_map->data.at(cell_index) = visited;
+
+        while(!wavefront.empty())
+        {
+          cell_index = wavefront.at(0);
+          wavefront.erase(wavefront.begin());
+
+          //explore cells neighbors in an 8-connected grid
+          unsigned int child_index;
+          int child_val;
+
+          unsigned int wavefront_cell_x, wavefront_cell_y;
+          index2cell(cell_index, cells_size_x, cells_size_y, wavefront_cell_x, wavefront_cell_y);
+
+          //8-connected grid
+          for(int i=-1; i<2; i++)
+          {
+            for(int j=-1; j<2; j++)
+            {
+              //makes sure index is inside map bounds
+              if(cell2index(wavefront_cell_x + i, wavefront_cell_y + j, cells_size_x, cells_size_y, child_index))
+              {
+                child_val = col_map->data.at(child_index);
+
+                //only count cell as connected if it is unknown (not occupied and not already expanded)
+                if(child_val == -1)
+                {
+                  //add to connected list
+                  connected_list.push_back(child_index);
+
+                  //mark cell as visited
+                  col_map->data.at(child_index) = visited;
+
+                  //add cell to wavefront
+                  wavefront.push_back(child_index);
+                }
+              }
+            }
+          }
+        }//end wavefront loop
+
+        //count connected cells
+        int connected_count = connected_list.size();
+
+        int min_connected = min_room_size;
+
+        //fill all cells with the cell count value
+        for(int k=0; k<connected_list.size(); k++)
+        {
+          if(connected_count > min_connected)
+            map->data.at(connected_list.at(k)) = robot_space; //robot could fit there
+          else
+            map->data.at(connected_list.at(k)) = unknown_placeholder; //unknown space
+        }
+      }
+    }
+  }
+  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
+  {
+    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
+    {
+      unsigned int cell_index;
+      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+
+      //compute number of connected cells if cell value is unknown
+      if(map->data.at(cell_index) == unknown_placeholder)
+        map->data.at(cell_index) = unknown_space;
+    }
+  }
+
+  //now that we have the potential robot space marked, wavefront expand
+  //from these cells to generate the occupancy map
+  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
+  {
+    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
+    {
+      unsigned int cell_index;
+      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+
+      //compute number of connected cells if the cell belongs to the robot space
+      if(map->data.at(cell_index) == robot_space)
+      {
+        //wavefront expansion to count number of cells
+        std::vector<unsigned int> wavefront;
+        std::vector<unsigned int> connected_list;
+
+        wavefront.push_back(cell_index);
+        connected_list.push_back(cell_index);
+        map->data.at(cell_index) = free_space;
 
         while(!wavefront.empty())
         {
@@ -307,14 +405,11 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
               {
                 child_val = map->data.at(child_index);
 
-                //only count cell as connected if it is unknown (not occupied and not already expanded)
-                if(child_val == -1)
+                //only count cell as connected if it not occupied and not already expanded)
+                if(child_val!=free_space && child_val!=CellOccupied)
                 {
-                  //add to connected list
-                  connected_list.push_back(child_index);
-
                   //mark cell as visited
-                  map->data.at(child_index) = visited;
+                  map->data.at(child_index) = free_space;
 
                   //add cell to wavefront
                   wavefront.push_back(child_index);
@@ -323,33 +418,7 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
             }
           }
         }//end wavefront loop
-
-        //count connected cells
-        int connected_count = connected_list.size();
-
-        int min_connected = 1000;
-
-        //fill all cells with the cell count value
-        for(int k=0; k<connected_list.size(); k++)
-        {
-          if(connected_count > min_connected)
-            map->data.at(connected_list.at(k)) = free_space; //free space
-          else
-            map->data.at(connected_list.at(k)) = unknown_placeholder; //unknown space
-        }
       }
-    }
-  }
-  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
-  {
-    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
-    {
-      unsigned int cell_index;
-      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-
-      //compute number of connected cells if cell value is unknown
-      if(map->data.at(cell_index) == unknown_placeholder)
-        map->data.at(cell_index) = unknown_space;
     }
   }
 }

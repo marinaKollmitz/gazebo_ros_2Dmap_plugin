@@ -63,14 +63,16 @@ class OccupancyMapFromWorld : public WorldPlugin {
 
   bool worldCellIntersection(const double cell_center_x, const double cell_center_y,
                              const double min_z, const double max_z,
-                             const double cell_length, gazebo::physics::RayShapePtr ray,
-                             std::string &entity_name);
+                             const double cell_length, gazebo::physics::RayShapePtr ray);
   
   bool CreateOccupancyMap(const math::Vector3& map_origin,
                           double map_size_x, double map_size_y,
                           double map_resolution);
 
   void MarkOccupiedCells(nav_msgs::OccupancyGrid* map, double min_z, double max_z);
+
+  void MarkConnected(nav_msgs::OccupancyGrid* map,
+                     int min_num_connected);
 
   void GetFreeSpace(nav_msgs::OccupancyGrid* map);
 
