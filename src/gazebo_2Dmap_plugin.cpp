@@ -76,7 +76,7 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   occupancy_map->info.origin = req.origin;
 
   //TODO add info to the request
-  double robot_radius = 0.25;
+  double robot_radius = 0.2;
   double robot_height = 1.0;
 
   //mark cells the robot center cannot reach
@@ -219,8 +219,8 @@ void OccupancyMapFromWorld::CropAtOccupied(nav_msgs::OccupancyGrid *map,
 void OccupancyMapFromWorld::InflateOccupiedCells(nav_msgs::OccupancyGrid *map,
                                                  double inflation_radius)
 {
-  int num_iterations = int(inflation_radius / map->info.resolution);
-  std::cout << "performing " << num_iterations << " iterations" << std::endl;
+  int num_iterations = round(inflation_radius / map->info.resolution);
+  //std::cout << "performing " << num_iterations << " iterations" << std::endl;
   uint32_t cells_size_x = map->info.width;
   uint32_t cells_size_y = map->info.height;
 
@@ -256,8 +256,9 @@ void OccupancyMapFromWorld::InflateOccupiedCells(nav_msgs::OccupancyGrid *map,
         }
       }
     }
+    map->data = inflated_map->data;
   }
-  map->data = inflated_map->data;
+  //map->data = inflated_map->data;
 }
 
 void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
