@@ -43,6 +43,8 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   col_map_service_ = nh_.advertiseService(
         "gazebo_2Dmap_plugin/generate_collision_map", &OccupancyMapFromWorld::ColServiceCallback,
         this);
+
+  std::cout << "occupancy map plugin started" << std::endl;
 }
 
 bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::GenerateMap::Request& req,
@@ -73,10 +75,22 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   occupancy_map->info.height = cells_size_y;
   occupancy_map->info.origin = req.origin;
 
+  //TODO add info to the request
+  double robot_radius = 0.25;
+  double robot_height = 1.0;
+
+  //mark cells the robot center cannot reach
   MarkOccupiedCells(occupancy_map, occupancy_map->info.origin.position.z,
-                    occupancy_map->info.origin.position.z);
-  GetFreeSpace(occupancy_map);
-  FilterOccupied(occupancy_map);
+                    occupancy_map->info.origin.position.z+robot_height);
+
+
+//  GetFreeSpace(occupancy_map);
+//  FilterOccupied(occupancy_map);
+
+  CropAtOccupied(occupancy_map, true, 10);
+
+  //std::cout << "inflating occupied cells" << std::endl;
+  InflateOccupiedCells(occupancy_map, robot_radius);
 
   occupancy_map->info.origin.position.x -= req.size_x/2;
   occupancy_map->info.origin.position.y -= req.size_y/2;
@@ -135,6 +149,115 @@ bool OccupancyMapFromWorld::ColServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
 
   return true;
+}
+
+void OccupancyMapFromWorld::CropAtOccupied(nav_msgs::OccupancyGrid *map,
+                                           bool draw_border, int cell_padding)
+{
+  uint32_t cells_size_x = map->info.width;
+  uint32_t cells_size_y = map->info.height;
+
+  //find the map borders
+  int min_cell_x = cells_size_x, min_cell_y = cells_size_y;
+  int max_cell_x = 0, max_cell_y = 0;
+
+  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
+    {
+      for(int cell_y=0; cell_y<cells_size_y; cell_y++)
+      {
+        unsigned int cell_index;
+        cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+
+        if(map->data.at(cell_index) == CellOccupied)
+        {
+          if(cell_x < min_cell_x)
+            min_cell_x = cell_x;
+          if(cell_y < min_cell_y)
+            min_cell_y = cell_y;
+          if(cell_x > max_cell_x)
+            max_cell_x = cell_x;
+          if(cell_y > max_cell_y)
+            max_cell_y = cell_y;
+        }
+      }
+    }
+
+    int pad_min_x = std::max(min_cell_x-cell_padding, 0);
+    int pad_min_y = std::max(min_cell_y-cell_padding, 0);
+    int pad_max_x = std::min(max_cell_x+cell_padding, (int)cells_size_x-1);
+    int pad_max_y = std::min(max_cell_y+cell_padding, (int)cells_size_y-1);
+
+    //transfer data to cropped vector
+    std::vector<int8_t> cropped_data;
+
+    unsigned int cell_x, cell_y;
+    for(int cell_index=0; cell_index<map->data.size(); cell_index++)
+    {
+      index2cell(cell_index, cells_size_x, cells_size_y, cell_x, cell_y);
+      if(cell_x >= pad_min_x && cell_x <= pad_max_x &&
+         cell_y >= pad_min_y && cell_y <= pad_max_y)
+      {
+        if(draw_border)
+        {
+          //if cell is a border cell, mark it as occupied
+          if(cell_x == min_cell_x || cell_x == max_cell_x || cell_y == min_cell_y || cell_y == max_cell_y)
+            map->data.at(cell_index) = CellOccupied;
+        }
+        cropped_data.push_back(map->data.at(cell_index));
+      }
+    }
+
+    map->data = cropped_data;
+    map->info.width = pad_max_x - pad_min_x + 1;
+    map->info.height = pad_max_y - pad_min_y + 1;
+    map->info.origin.position.x =
+        map->info.origin.position.x + pad_min_x*map->info.resolution;
+    map->info.origin.position.y =
+        map->info.origin.position.y + pad_min_y*map->info.resolution;
+}
+
+void OccupancyMapFromWorld::InflateOccupiedCells(nav_msgs::OccupancyGrid *map,
+                                                 double inflation_radius)
+{
+  int num_iterations = int(inflation_radius / map->info.resolution);
+  std::cout << "performing " << num_iterations << " iterations" << std::endl;
+  uint32_t cells_size_x = map->info.width;
+  uint32_t cells_size_y = map->info.height;
+
+  nav_msgs::OccupancyGrid* inflated_map = new nav_msgs::OccupancyGrid;
+  inflated_map->info = map->info;
+  inflated_map->header = map->header;
+  inflated_map->data.resize(cells_size_x * cells_size_y);
+  std::fill(inflated_map->data.begin(), inflated_map->data.end(), CellFree);
+
+  for(int it=0; it<num_iterations; it++)
+  {
+    //iterate map cells. for each cell, mark 8 neighbors as occupied
+    for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
+    {
+      for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
+      {
+        unsigned int cell_index;
+        cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+
+        //check if cell is occupied
+        if(map->data.at(cell_index) == CellOccupied)
+        {
+          for(int inc_x=-1; inc_x<=1; inc_x++)
+          {
+            for(int inc_y=-1; inc_y<=1; inc_y++)
+            {
+              int neighbor_x = cell_x + inc_x;
+              int neighbor_y = cell_y + inc_y;
+              if(cell2index(neighbor_x, neighbor_y, cells_size_x, cells_size_y, cell_index));
+                inflated_map->data.at(cell_index) = CellOccupied;
+            }
+          }
+        }
+      }
+    }
+  }
+  map->data = inflated_map->data;
 }
 
 void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,

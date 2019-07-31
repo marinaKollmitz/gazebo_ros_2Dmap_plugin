@@ -71,6 +71,11 @@ class OccupancyMapFromWorld : public WorldPlugin {
 
   void MarkOccupiedCells(nav_msgs::OccupancyGrid* map, double min_z, double max_z);
 
+  void InflateOccupiedCells(nav_msgs::OccupancyGrid *map, double inflation_radius);
+
+  void CropAtOccupied(nav_msgs::OccupancyGrid *map, bool draw_border,
+                      int cell_padding);
+
   void MarkConnected(nav_msgs::OccupancyGrid* map,
                      int min_num_connected);
 
