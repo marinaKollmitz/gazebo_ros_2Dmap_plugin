@@ -104,8 +104,8 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   res.map = *occupancy_map;
   res.success = true;
 
-  map_pub_.publish(*occupancy_map);
-  marker_pub_.publish(marker_);
+//  map_pub_.publish(*occupancy_map);
+//  marker_pub_.publish(marker_);
 
 //  while(ros::ok())
 //  {
@@ -180,7 +180,7 @@ bool OccupancyMapFromWorld::ColServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   res.map = *occupancy_map;
   res.success = true;
 
-  map_pub_.publish(*occupancy_map);
+//  map_pub_.publish(*occupancy_map);
 
   ros::Duration dur = ros::Time::now() - now;
   std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
@@ -424,9 +424,53 @@ void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
   }
 }
 
+void CountingModel(nav_msgs::OccupancyGrid* map,
+                   std::vector<int64_t> hits_map,
+                   std::vector<int64_t> misses_map,
+                   double occupancy_scale)
+{
+  for(int i=0; i<map->data.size(); i++)
+  {
+    int hits = hits_map.at(i);
+    int misses = misses_map.at(i);
+
+    if((hits+misses)>0)
+    {
+      double occupancy = double(hits)/double(hits+misses);
+      map->data.at(i) = occupancy * occupancy_scale;
+    }
+    else
+      map->data.at(i) = 0.5*occupancy_scale;
+  }
+}
+
 void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
                                      double noise_stddev)
 {
+  ros::Publisher valid_samples_pub = nh_.advertise<geometry_msgs::PoseArray>("valid_samples", 1);
+  ros::Publisher invalid_samples_pub = nh_.advertise<geometry_msgs::PoseArray>("invalid_samples", 1);
+  ros::Publisher hits_map_pub = nh_.advertise<nav_msgs::OccupancyGrid>("hits_map", 1);
+  ros::Publisher misses_map_pub = nh_.advertise<nav_msgs::OccupancyGrid>("misses_map", 1);
+  geometry_msgs::PoseArray valid_samples;
+  geometry_msgs::PoseArray invalid_samples;
+  valid_samples.header = map->header;
+  invalid_samples.header = map->header;
+
+  nav_msgs::OccupancyGrid viz_grid;
+  viz_grid.header = map->header;
+  viz_grid.info = map->info;
+  viz_grid.data.resize(map->data.size());
+
+  nav_msgs::OccupancyGrid hits_viz_grid;
+  hits_viz_grid.header = map->header;
+  hits_viz_grid.info = map->info;
+  hits_viz_grid.data.resize(map->data.size());
+
+  nav_msgs::OccupancyGrid miss_viz_grid;
+  miss_viz_grid.header = map->header;
+  miss_viz_grid.info = map->info;
+  miss_viz_grid.data.resize(map->data.size());
+
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
   engine->InitForThread();
   gazebo::physics::RayShapePtr ray =
@@ -452,14 +496,13 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
   std::uniform_real_distribution<> y_sampler(y_min, y_max);
   std::uniform_real_distribution<> theta_sampler(theta_min, theta_max);
 
-  std::vector<int8_t> hits_map, misses_map;
+  std::vector<int64_t> hits_map, misses_map;
   hits_map.resize(map->data.size());
   misses_map.resize(map->data.size());
 
   int samples_per_m2 = 100;
   int num_pose_samples = samples_per_m2 * (map->info.width*map_resolution) * (map->info.height*map_resolution);
 
-  map_pub_.publish(*map);
   for(int sample_i=0; sample_i<num_pose_samples; sample_i++)
   {
     //sample random x,y and theta
@@ -467,36 +510,21 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
     double pose_y = y_sampler(generator);
     double pose_theta = theta_sampler(generator);
 
+    geometry_msgs::Pose sampled_pose;
+    sampled_pose.position.x = pose_x;
+    sampled_pose.position.y = pose_y;
+    sampled_pose.position.z = map_z;
+    tf::Quaternion quat = tf::createQuaternionFromRPY(0,0,pose_theta);
+    tf::quaternionTFToMsg(quat, sampled_pose.orientation);
+
     //check if pose lies within reachable space
     unsigned int map_x, map_y, map_index;
     world2cell(pose_x, pose_y, map_resolution, map->info.origin.position, map_x, map_y);
     cell2index(map_x, map_y, cells_size_x, cells_size_y, map_index);
 
-//    marker_.type = visualization_msgs::Marker::ARROW;
-//    marker_.header.frame_id = "odom";
-//    marker_.header.stamp = ros::Time::now();
-//    marker_.points.clear();
-//    geometry_msgs::Point start;
-//    start.x = pose_x;
-//    start.y = pose_y;
-//    start.z = map_z;
-//    geometry_msgs::Point end;
-//    end.x = pose_x + 0.25*cos(pose_theta);
-//    end.y = pose_y + 0.25*sin(pose_theta);
-//    end.z = map_z;
-//    marker_.points.push_back(start);
-//    marker_.points.push_back(end);
-//    marker_.color.a = 1;
-//    marker_.color.g = 0;
-//    marker_.color.r = 1;
-//    marker_.scale.x = 0.05;
-//    marker_.scale.y = 0.1;
-//    marker_.scale.z = 0.1;
-
     if(map->data.at(map_index) == CellFree)
     {
-//      marker_.color.r = 0;
-//      marker_.color.g = 1;
+      valid_samples.poses.push_back(sampled_pose);
 
       //simulate laser scan
       int num_rays = 360;
@@ -506,6 +534,7 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
 
       while(scan_angle < 2*M_PI)
       {
+        std::fill(viz_grid.data.begin(), viz_grid.data.end(), 0);
         //find the undistorted hit distance
         double ray_angle = pose_theta + scan_angle;
         double end_x = pose_x + max_range * cos(ray_angle);
@@ -530,17 +559,24 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
 
         world2cell(hit_x, hit_y, map_resolution, map->info.origin.position,
                    hit_cell_x, hit_cell_y);
+
         //make sure cell is inside map boundaries
         if(cell2index(hit_cell_x, hit_cell_y, map->info.width, map->info.height,
                       hit_index))
         {
-          hits_map.at(hit_index) += 1;
-//          map->data.at(hit_index) = 50;
+          viz_grid.data.at(hit_index) = 200;
+          if(hits_viz_grid.data.at(hit_index) < 100)
+            hits_viz_grid.data.at(hit_index) += 10; //choose larger value for visualization
+
+          if(hits_map.at(hit_index) < INT64_MAX)
+            hits_map.at(hit_index) += 1;
+          else
+            std::cout << "MAX NUMBER REACHED!!" << std::endl;
         }
 
         //get missed cells
         //walk along the ray to see which cells were hit
-        double dist_incr = 0.5*map->info.resolution;
+        double dist_incr = 0.25*map->info.resolution;
         double ray_dist = dist-dist_incr;
         unsigned int last_miss_index = UINT_MAX;
 
@@ -561,153 +597,64 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
             //make sure we didn't already count this cell
             if(miss_index != hit_index && miss_index != last_miss_index)
             {
-              misses_map.at(miss_index) += 1;
+              viz_grid.data.at(miss_index) = 50;
+              if(miss_viz_grid.data.at(miss_index) < 100)
+                miss_viz_grid.data.at(miss_index) += 10; //choose larger value for visualization
+
+              if(misses_map.at(miss_index) < INT64_MAX)
+                misses_map.at(miss_index) += 1;
+              else
+                std::cout << "MAX NUMBER REACHED!!" << std::endl;
+
               last_miss_index = miss_index;
-//              map->data.at(miss_index) = 25;
             }
           }
 
           ray_dist-=dist_incr;
         }
-//        map_pub2_.publish(*map);
-//        ros::Duration(1.0).sleep();
+        marker_.type = visualization_msgs::Marker::LINE_LIST;
+        marker_.header = map->header;
+        geometry_msgs::Point start, end;
+        start.x = pose_x;
+        start.y = pose_y;
+        start.z = map_z;
+        end.x = hit_x;
+        end.y = hit_y;
+        end.z = map_z;
+        marker_.points.clear();
+        marker_.points.push_back(start);
+        marker_.points.push_back(end);
+        marker_.scale.x = 0.01;
+        marker_.color.a = 1;
+        marker_.color.b = 1;
+
+        marker_pub_.publish(marker_);
+        map_pub2_.publish(viz_grid);
+        ros::Duration(0.025).sleep();
+
+        valid_samples_pub.publish(valid_samples);
         scan_angle += angle_incr;
       }
 
-//      pose_sample += 1;
+      CountingModel(&viz_grid, hits_map, misses_map, CellOccupied);
+
+      std::cout << "publish occupancy map: " << std::endl;
+      for(int loop=0; loop<5; loop++)
+      {
+        hits_map_pub.publish(hits_viz_grid);
+        misses_map_pub.publish(miss_viz_grid);
+        map_pub_.publish(viz_grid);
+        ros::Rate(100).sleep();
+      }
+
       std::cout << "pose sample: " << sample_i << std::endl;
     }
-//    map_pub_.publish(*map);
-//    marker_pub_.publish(marker_);
-//    ros::Duration(1).sleep();
-  }
-
-//  for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
-//  {
-//    for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
-//    {
-//      unsigned int cell_index;
-//      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-
-//      //check if cell is reachable by robot
-//      if(map->data.at(cell_index) == CellFree)
-//      {
-//        map->data.at(cell_index) = 200;
-//        double center_x, center_y;
-//        //start ray array from cell center
-//        cell2world(cell_x, cell_y, map_resolution,
-//                   map->info.origin.position, center_x, center_y);
-
-//        visualization_msgs::Marker cell_position_marker;
-//        cell_position_marker.type = visualization_msgs::Marker::POINTS;
-//        cell_position_marker.header.frame_id = "odom";
-//        cell_position_marker.header.stamp = ros::Time::now();
-//        cell_position_marker.pose.orientation.w = 1;
-//        cell_position_marker.color.a = 1;
-//        geometry_msgs::Point point;
-//        point.x = center_x;
-//        point.y = center_y;
-//        cell_position_marker.points.push_back(point);
-//        cell_position_marker.scale.x = 0.05;
-//        cell_position_marker.scale.y = 0.05;
-
-//        marker_ = cell_position_marker;
-
-//        int num_rays = 360;
-//        double angle_incr = 2*M_PI/num_rays;
-//        double max_range = 10;
-//        double ray_angle = 0;
-
-////        map->data.at(cell_index) = 10;
-
-//        while(ray_angle < 2*M_PI)
-//        {
-//          double end_x = center_x + max_range * cos(ray_angle);
-//          double end_y = center_y + max_range * sin(ray_angle);
-
-//          double dist;
-//          std::string entity_name;
-
-//          ray->SetPoints(math::Vector3(center_x, center_y, map_z),
-//                         math::Vector3(end_x, end_y, map_z));
-//          ray->GetIntersection(dist, entity_name);
-
-//          //add noise to measured distance
-//          dist = dist + distribution(generator);
-
-//          //cell that has been hit
-//          unsigned int hit_cell = map->data.size();
-//          unsigned int check_cell_x, check_cell_y, check_index;
-
-//          double check_x = center_x + dist*cos(ray_angle);
-//          double check_y = center_y + dist*sin(ray_angle);
-
-//          world2cell(check_x, check_y, map_resolution, map->info.origin.position,
-//                     check_cell_x, check_cell_y);
-//          if(cell2index(check_cell_x, check_cell_y, map->info.width, map->info.height,
-//                        check_index))
-//          {
-//            hit_cell = check_index;
-//            hits_map.at(check_index) += 1;
-//            map->data.at(hit_cell) = 50;
-//          }
-
-//          //walk along the ray to see which cells were hit
-//          double dist_incr = 0.5*map->info.resolution;
-//          double ray_dist = dist-dist_incr;
-//          unsigned int last_miss_index = map->data.size();
-
-//          while(ray_dist>0)
-//          {
-//            double check_x = center_x + ray_dist*cos(ray_angle);
-//            double check_y = center_y + ray_dist*sin(ray_angle);
-
-//            world2cell(check_x, check_y, map_resolution, map->info.origin.position,
-//                       check_cell_x, check_cell_y);
-//            if(cell2index(check_cell_x, check_cell_y, map->info.width, map->info.height,
-//                          check_index))
-//            {
-//              //make sure we didn't already count this cell
-//              if(check_index != hit_cell && check_index != last_miss_index)
-//              {
-//                misses_map.at(check_index) += 1;
-//                last_miss_index = check_index;
-//                map->data.at(check_index) = 25;
-//              }
-//            }
-
-//            ray_dist-=dist_incr;
-//          }
-////          map_pub2_.publish(*map);
-////          ros::Duration(1.0).sleep();
-//          ray_angle += angle_incr;
-//          std::cout << "ray_angle" << ray_angle << std::endl;
-//        }
-//      }
-//    }
-//  }
-
-  std::vector<int8_t> occ_data;
-  occ_data.resize(map->data.size());
-  std::fill(occ_data.begin(), occ_data.end(), CellUnknown);
-
-  for(int i=0; i<map->data.size(); i++)
-  {
-    int hits = hits_map.at(i);
-    int misses = misses_map.at(i);
-
-    //make sure we took some measurements for the cell
-    if(hits + misses > 0)
+    else //map is not in free space
     {
-      occ_data.at(i) = float(hits)/float((hits+misses)) * CellOccupied;
+      invalid_samples.poses.push_back(sampled_pose);
+      invalid_samples_pub.publish(invalid_samples);
     }
   }
-  map->data = occ_data;
-  //map->data = hits_map;
-  //map_pub2_.publish(*map);
-
-  //map->data = misses_map;
-  //map_pub_.publish(*map);
 }
 
 bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,

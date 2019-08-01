@@ -41,6 +41,7 @@
 #include <random>
 #include <sensor_msgs/LaserScan.h>
 #include <tf/transform_broadcaster.h>
+#include <geometry_msgs/PoseArray.h>
 
 namespace gazebo {
 
