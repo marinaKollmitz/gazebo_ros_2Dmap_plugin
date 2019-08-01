@@ -424,12 +424,13 @@ void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
   }
 }
 
-void CountingModel(nav_msgs::OccupancyGrid* map,
-                   std::vector<int64_t> hits_map,
-                   std::vector<int64_t> misses_map,
-                   double occupancy_scale)
+std::vector<double> CountingModel(std::vector<int64_t> hits_map,
+                                  std::vector<int64_t> misses_map)
 {
-  for(int i=0; i<map->data.size(); i++)
+  std::vector<double> occ_map;
+  occ_map.resize(hits_map.size());
+
+  for(int i=0; i<hits_map.size(); i++)
   {
     int hits = hits_map.at(i);
     int misses = misses_map.at(i);
@@ -437,11 +438,13 @@ void CountingModel(nav_msgs::OccupancyGrid* map,
     if((hits+misses)>0)
     {
       double occupancy = double(hits)/double(hits+misses);
-      map->data.at(i) = occupancy * occupancy_scale;
+      occ_map.at(i) = occupancy;
     }
     else
-      map->data.at(i) = 0.5*occupancy_scale;
+      occ_map.at(i) = 0.5;
   }
+
+  return occ_map;
 }
 
 void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
@@ -636,7 +639,11 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
         scan_angle += angle_incr;
       }
 
-      CountingModel(&viz_grid, hits_map, misses_map, CellOccupied);
+      std::vector<double> occupancy_grid = CountingModel(hits_map, misses_map);
+      for(int map_i=0; map_i<occupancy_grid.size(); map_i++)
+      {
+        viz_grid.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
+      }
 
       std::cout << "publish occupancy map: " << std::endl;
       for(int loop=0; loop<5; loop++)
