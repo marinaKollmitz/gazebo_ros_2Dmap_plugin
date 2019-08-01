@@ -37,6 +37,9 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   world_ = _parent;
 
   map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("map", 1);
+  map_pub2_ = nh_.advertise<nav_msgs::OccupancyGrid>("map2", 1);
+  marker_pub_ = nh_.advertise<visualization_msgs::Marker>("viz_marker", 1);
+  scan_pub_ = nh_.advertise<sensor_msgs::LaserScan>("scan",1);
   occ_map_service_ = nh_.advertiseService(
         "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::OccServiceCallback, this);
 
@@ -74,6 +77,8 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   occupancy_map->info.width = cells_size_x;
   occupancy_map->info.height = cells_size_y;
   occupancy_map->info.origin = req.origin;
+  occupancy_map->info.origin.position.x = -req.size_x/2;
+  occupancy_map->info.origin.position.y = -req.size_y/2;
 
   //TODO add info to the request
   double robot_radius = 0.2;
@@ -83,22 +88,54 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   MarkOccupiedCells(occupancy_map, occupancy_map->info.origin.position.z,
                     occupancy_map->info.origin.position.z+robot_height);
 
-
-//  GetFreeSpace(occupancy_map);
-//  FilterOccupied(occupancy_map);
-
   CropAtOccupied(occupancy_map, true, 10);
 
   //std::cout << "inflating occupied cells" << std::endl;
   InflateOccupiedCells(occupancy_map, robot_radius);
 
-  occupancy_map->info.origin.position.x -= req.size_x/2;
-  occupancy_map->info.origin.position.y -= req.size_y/2;
+  //min room size is 2x2 meters
+  int min_room_cells = pow(2.0/occupancy_map->info.resolution,2);
+  MarkConnected(occupancy_map, min_room_cells);
+
+  std::cout << "simlating mapping" << std::endl;
+//  SimulateMapping(occupancy_map, 0.01);
+  MapSpace(occupancy_map, 0.01);
 
   res.map = *occupancy_map;
   res.success = true;
 
   map_pub_.publish(*occupancy_map);
+  marker_pub_.publish(marker_);
+
+//  while(ros::ok())
+//  {
+//    marker_pub_.publish(marker_);
+//    ros::Rate(10).sleep();
+//  }
+
+//  double center_x, center_y;
+//  cell2world(0, 0, occupancy_map->info.resolution,
+//             occupancy_map->info.origin.position,
+//             center_x, center_y);
+
+//  visualization_msgs::Marker cell_position_marker;
+//  cell_position_marker.type = visualization_msgs::Marker::POINTS;
+//  cell_position_marker.header.frame_id = "odom";
+//  cell_position_marker.header.stamp = ros::Time::now();
+//  cell_position_marker.pose.orientation.w = 1;
+//  cell_position_marker.color.a = 1;
+//  geometry_msgs::Point point;
+//  point.x = center_x;
+//  point.y = center_y;
+//  cell_position_marker.points.push_back(point);
+//  cell_position_marker.scale.x = 0.05;
+//  cell_position_marker.scale.y = 0.05;
+
+//  while(ros::ok())
+//  {
+//    marker_pub_.publish(cell_position_marker);
+//    ros::Rate(10).sleep();
+//  }
 
   ros::Duration dur = ros::Time::now() - now;
   std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
@@ -228,7 +265,7 @@ void OccupancyMapFromWorld::InflateOccupiedCells(nav_msgs::OccupancyGrid *map,
   inflated_map->info = map->info;
   inflated_map->header = map->header;
   inflated_map->data.resize(cells_size_x * cells_size_y);
-  std::fill(inflated_map->data.begin(), inflated_map->data.end(), CellFree);
+  std::fill(inflated_map->data.begin(), inflated_map->data.end(), CellUnknown);
 
   for(int it=0; it<num_iterations; it++)
   {
@@ -273,16 +310,14 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
   uint32_t cells_size_x = map->info.width;
   uint32_t cells_size_y = map->info.height;
   double map_resolution = map->info.resolution;
-  double map_size_x = map->info.width * map->info.resolution;
-  double map_size_y = map->info.height * map->info.resolution;
 
   for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
   {
     for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
     {
       double world_x, world_y;
-      //TODO cell2world muss map origin beachten?
-      cell2world(cell_x, cell_y, map_size_x, map_size_y, map_resolution,
+
+      cell2world(cell_x, cell_y, map_resolution,
                  map->info.origin.position, world_x, world_y);
 
       bool cell_occupied = worldCellIntersection(world_x, world_y, min_z, max_z,
@@ -291,9 +326,13 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
       if(cell_occupied)
       {
         unsigned int cell_index;
-        cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-        //mark cell as occupied
-        map->data.at(cell_index) = CellOccupied;
+        if(cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index))
+        {
+          //mark cell as occupied
+          map->data.at(cell_index) = CellOccupied;
+        }
+        else
+          std::cout << "index outside map bounds! " << std::endl;
       }
     }
   }
@@ -304,6 +343,371 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
   engine->Reset();
 
   return;
+}
+
+// this works with gmappin: rosrun gmapping slam_gmapping
+// requires to publish static trafo between base_link and laser frames:
+// rosrun tf static_transform_publisher 0 0 0 0 0 0 baslink laser 10
+void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
+                                            double noise_stddev)
+{
+  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
+  engine->InitForThread();
+  gazebo::physics::RayShapePtr ray =
+      boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
+        engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
+
+  uint32_t cells_size_x = map->info.width;
+  uint32_t cells_size_y = map->info.height;
+  double map_resolution = map->info.resolution;
+  double map_z = map->info.origin.position.z;
+
+  std::default_random_engine generator;
+  std::normal_distribution<double> distribution(0.0,noise_stddev);
+
+  sensor_msgs::LaserScan scan;
+  scan.header.frame_id = "laser";
+  int num_rays = 360;
+  double angle_incr = 2*M_PI/num_rays;
+  double max_range = 10;
+  scan.angle_min = 0;
+  scan.angle_max = (num_rays-1)*angle_incr;
+  scan.angle_increment = angle_incr;
+  scan.range_max = max_range;
+  scan.range_min = 0.0;
+  tf::Transform transform;
+
+  for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
+  {
+    for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
+    {
+      unsigned int cell_index;
+      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+
+      //check if cell is reachable by robot
+      if(map->data.at(cell_index) == CellFree)
+      {
+        double center_x, center_y;
+        //start ray array from cell center
+        cell2world(cell_x, cell_y, map_resolution,
+                   map->info.origin.position, center_x, center_y);
+
+        scan.ranges.clear();
+
+        double ray_angle = scan.angle_min;
+        while(ray_angle <= scan.angle_max)
+        {
+          double end_x = center_x + max_range * cos(ray_angle);
+          double end_y = center_y + max_range * sin(ray_angle);
+
+          double dist;
+          std::string entity_name;
+
+          ray->SetPoints(math::Vector3(center_x, center_y, map_z),
+                         math::Vector3(end_x, end_y, map_z));
+          ray->GetIntersection(dist, entity_name);
+
+          //add noise to measured distance
+          dist = dist + distribution(generator);
+          scan.ranges.push_back(dist);
+
+          ray_angle += angle_incr;
+        }
+        scan.header.stamp = ros::Time::now();
+        transform.setOrigin(tf::Vector3(center_x, center_y, map_z));
+        transform.setRotation(tf::Quaternion(0, 0, 0, 1));
+        br_.sendTransform(tf::StampedTransform(transform, scan.header.stamp, "odom", "base_link"));
+        scan_pub_.publish(scan);
+        ros::Duration(0.05).sleep();
+      }
+    }
+  }
+}
+
+void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
+                                     double noise_stddev)
+{
+  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
+  engine->InitForThread();
+  gazebo::physics::RayShapePtr ray =
+      boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
+        engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
+
+  uint32_t cells_size_x = map->info.width;
+  uint32_t cells_size_y = map->info.height;
+  double map_resolution = map->info.resolution;
+  double map_z = map->info.origin.position.z;
+
+  //map boundaries for pose sampling
+  double x_min = map->info.origin.position.x;
+  double x_max = map->info.origin.position.x + cells_size_x*map_resolution;
+  double y_min = map->info.origin.position.y;
+  double y_max = map->info.origin.position.y + cells_size_y*map_resolution;
+  double theta_min = 0;
+  double theta_max = 2*M_PI;
+
+  std::default_random_engine generator;
+  std::normal_distribution<double> noise_sampler(0.0,noise_stddev);
+  std::uniform_real_distribution<> x_sampler(x_min, x_max);
+  std::uniform_real_distribution<> y_sampler(y_min, y_max);
+  std::uniform_real_distribution<> theta_sampler(theta_min, theta_max);
+
+  std::vector<int8_t> hits_map, misses_map;
+  hits_map.resize(map->data.size());
+  misses_map.resize(map->data.size());
+
+  int samples_per_m2 = 100;
+  int num_pose_samples = samples_per_m2 * (map->info.width*map_resolution) * (map->info.height*map_resolution);
+
+  map_pub_.publish(*map);
+  for(int sample_i=0; sample_i<num_pose_samples; sample_i++)
+  {
+    //sample random x,y and theta
+    double pose_x = x_sampler(generator);
+    double pose_y = y_sampler(generator);
+    double pose_theta = theta_sampler(generator);
+
+    //check if pose lies within reachable space
+    unsigned int map_x, map_y, map_index;
+    world2cell(pose_x, pose_y, map_resolution, map->info.origin.position, map_x, map_y);
+    cell2index(map_x, map_y, cells_size_x, cells_size_y, map_index);
+
+//    marker_.type = visualization_msgs::Marker::ARROW;
+//    marker_.header.frame_id = "odom";
+//    marker_.header.stamp = ros::Time::now();
+//    marker_.points.clear();
+//    geometry_msgs::Point start;
+//    start.x = pose_x;
+//    start.y = pose_y;
+//    start.z = map_z;
+//    geometry_msgs::Point end;
+//    end.x = pose_x + 0.25*cos(pose_theta);
+//    end.y = pose_y + 0.25*sin(pose_theta);
+//    end.z = map_z;
+//    marker_.points.push_back(start);
+//    marker_.points.push_back(end);
+//    marker_.color.a = 1;
+//    marker_.color.g = 0;
+//    marker_.color.r = 1;
+//    marker_.scale.x = 0.05;
+//    marker_.scale.y = 0.1;
+//    marker_.scale.z = 0.1;
+
+    if(map->data.at(map_index) == CellFree)
+    {
+//      marker_.color.r = 0;
+//      marker_.color.g = 1;
+
+      //simulate laser scan
+      int num_rays = 360;
+      double angle_incr = 2*M_PI/num_rays;
+      double max_range = 10;
+      double scan_angle = 0;
+
+      while(scan_angle < 2*M_PI)
+      {
+        //find the undistorted hit distance
+        double ray_angle = pose_theta + scan_angle;
+        double end_x = pose_x + max_range * cos(ray_angle);
+        double end_y = pose_y + max_range * sin(ray_angle);
+
+        double dist;
+        std::string entity_name;
+
+        ray->SetPoints(math::Vector3(pose_x, pose_y, map_z),
+                       math::Vector3(end_x, end_y, map_z));
+        ray->GetIntersection(dist, entity_name);
+
+        //add noise to hit distance
+        dist = dist + noise_sampler(generator);
+
+        //get hit cell
+        unsigned int hit_index = UINT_MAX;
+        unsigned int hit_cell_x, hit_cell_y;
+
+        double hit_x = pose_x + dist*cos(ray_angle);
+        double hit_y = pose_y + dist*sin(ray_angle);
+
+        world2cell(hit_x, hit_y, map_resolution, map->info.origin.position,
+                   hit_cell_x, hit_cell_y);
+        //make sure cell is inside map boundaries
+        if(cell2index(hit_cell_x, hit_cell_y, map->info.width, map->info.height,
+                      hit_index))
+        {
+          hits_map.at(hit_index) += 1;
+//          map->data.at(hit_index) = 50;
+        }
+
+        //get missed cells
+        //walk along the ray to see which cells were hit
+        double dist_incr = 0.5*map->info.resolution;
+        double ray_dist = dist-dist_incr;
+        unsigned int last_miss_index = UINT_MAX;
+
+        while(ray_dist>0)
+        {
+          unsigned int miss_cell_x, miss_cell_y, miss_index;
+
+          double miss_x = pose_x + ray_dist*cos(ray_angle);
+          double miss_y = pose_y + ray_dist*sin(ray_angle);
+
+          world2cell(miss_x, miss_y, map_resolution, map->info.origin.position,
+                     miss_cell_x, miss_cell_y);
+
+          //make sure cell is inside map boundaries
+          if(cell2index(miss_cell_x, miss_cell_y, map->info.width, map->info.height,
+                        miss_index))
+          {
+            //make sure we didn't already count this cell
+            if(miss_index != hit_index && miss_index != last_miss_index)
+            {
+              misses_map.at(miss_index) += 1;
+              last_miss_index = miss_index;
+//              map->data.at(miss_index) = 25;
+            }
+          }
+
+          ray_dist-=dist_incr;
+        }
+//        map_pub2_.publish(*map);
+//        ros::Duration(1.0).sleep();
+        scan_angle += angle_incr;
+      }
+
+//      pose_sample += 1;
+      std::cout << "pose sample: " << sample_i << std::endl;
+    }
+//    map_pub_.publish(*map);
+//    marker_pub_.publish(marker_);
+//    ros::Duration(1).sleep();
+  }
+
+//  for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
+//  {
+//    for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
+//    {
+//      unsigned int cell_index;
+//      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+
+//      //check if cell is reachable by robot
+//      if(map->data.at(cell_index) == CellFree)
+//      {
+//        map->data.at(cell_index) = 200;
+//        double center_x, center_y;
+//        //start ray array from cell center
+//        cell2world(cell_x, cell_y, map_resolution,
+//                   map->info.origin.position, center_x, center_y);
+
+//        visualization_msgs::Marker cell_position_marker;
+//        cell_position_marker.type = visualization_msgs::Marker::POINTS;
+//        cell_position_marker.header.frame_id = "odom";
+//        cell_position_marker.header.stamp = ros::Time::now();
+//        cell_position_marker.pose.orientation.w = 1;
+//        cell_position_marker.color.a = 1;
+//        geometry_msgs::Point point;
+//        point.x = center_x;
+//        point.y = center_y;
+//        cell_position_marker.points.push_back(point);
+//        cell_position_marker.scale.x = 0.05;
+//        cell_position_marker.scale.y = 0.05;
+
+//        marker_ = cell_position_marker;
+
+//        int num_rays = 360;
+//        double angle_incr = 2*M_PI/num_rays;
+//        double max_range = 10;
+//        double ray_angle = 0;
+
+////        map->data.at(cell_index) = 10;
+
+//        while(ray_angle < 2*M_PI)
+//        {
+//          double end_x = center_x + max_range * cos(ray_angle);
+//          double end_y = center_y + max_range * sin(ray_angle);
+
+//          double dist;
+//          std::string entity_name;
+
+//          ray->SetPoints(math::Vector3(center_x, center_y, map_z),
+//                         math::Vector3(end_x, end_y, map_z));
+//          ray->GetIntersection(dist, entity_name);
+
+//          //add noise to measured distance
+//          dist = dist + distribution(generator);
+
+//          //cell that has been hit
+//          unsigned int hit_cell = map->data.size();
+//          unsigned int check_cell_x, check_cell_y, check_index;
+
+//          double check_x = center_x + dist*cos(ray_angle);
+//          double check_y = center_y + dist*sin(ray_angle);
+
+//          world2cell(check_x, check_y, map_resolution, map->info.origin.position,
+//                     check_cell_x, check_cell_y);
+//          if(cell2index(check_cell_x, check_cell_y, map->info.width, map->info.height,
+//                        check_index))
+//          {
+//            hit_cell = check_index;
+//            hits_map.at(check_index) += 1;
+//            map->data.at(hit_cell) = 50;
+//          }
+
+//          //walk along the ray to see which cells were hit
+//          double dist_incr = 0.5*map->info.resolution;
+//          double ray_dist = dist-dist_incr;
+//          unsigned int last_miss_index = map->data.size();
+
+//          while(ray_dist>0)
+//          {
+//            double check_x = center_x + ray_dist*cos(ray_angle);
+//            double check_y = center_y + ray_dist*sin(ray_angle);
+
+//            world2cell(check_x, check_y, map_resolution, map->info.origin.position,
+//                       check_cell_x, check_cell_y);
+//            if(cell2index(check_cell_x, check_cell_y, map->info.width, map->info.height,
+//                          check_index))
+//            {
+//              //make sure we didn't already count this cell
+//              if(check_index != hit_cell && check_index != last_miss_index)
+//              {
+//                misses_map.at(check_index) += 1;
+//                last_miss_index = check_index;
+//                map->data.at(check_index) = 25;
+//              }
+//            }
+
+//            ray_dist-=dist_incr;
+//          }
+////          map_pub2_.publish(*map);
+////          ros::Duration(1.0).sleep();
+//          ray_angle += angle_incr;
+//          std::cout << "ray_angle" << ray_angle << std::endl;
+//        }
+//      }
+//    }
+//  }
+
+  std::vector<int8_t> occ_data;
+  occ_data.resize(map->data.size());
+  std::fill(occ_data.begin(), occ_data.end(), CellUnknown);
+
+  for(int i=0; i<map->data.size(); i++)
+  {
+    int hits = hits_map.at(i);
+    int misses = misses_map.at(i);
+
+    //make sure we took some measurements for the cell
+    if(hits + misses > 0)
+    {
+      occ_data.at(i) = float(hits)/float((hits+misses)) * CellOccupied;
+    }
+  }
+  map->data = occ_data;
+  //map->data = hits_map;
+  //map_pub2_.publish(*map);
+
+  //map->data = misses_map;
+  //map_pub_.publish(*map);
 }
 
 bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,
@@ -363,13 +767,8 @@ bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,
                        math::Vector3(end_x, end_y, min_z));
         ray->GetIntersection(dist, entity_name);
 
-//        if(!entity_name.empty())
+        if(!entity_name.empty())
 //          std::cout << "entity name: " << entity_name << std::endl;
-
-        if(IsFloor(entity_name))
-          std::cout << "hit the floor" << std::endl;
-
-        if(!entity_name.empty() && !IsFloor(entity_name) && !IsCeiling(entity_name))
           return true;
       }
     }
@@ -378,8 +777,10 @@ bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,
   return false;
 }
 
-//TODO make method nicer
-void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
+//mark the cells that can be reached by the robot, based on the heuristic of
+//how many cells are connected
+void OccupancyMapFromWorld::MarkConnected(nav_msgs::OccupancyGrid* map,
+                                          int min_connected)
 {
   std::cout << "marking free space " << std::endl;
 
@@ -387,17 +788,6 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
   unsigned int cells_size_y = map->info.height;
 
   int8_t visited = 50; //value for marking visited cells
-  int8_t unknown_placeholder = 200; //placeholder value for marking unknown cells
-  int8_t free_space = 0;
-  int8_t unknown_space = -1;
-  int8_t robot_space = 10;
-
-  double target_robot_height = 1.0;
-  double min_room_size = std::pow(2/map->info.resolution, 2); //min room size is 2 square meters
-
-  nav_msgs::OccupancyGrid* col_map = new nav_msgs::OccupancyGrid(*map);
-  MarkOccupiedCells(col_map, col_map->info.origin.position.z,
-                    col_map->info.origin.position.z + target_robot_height);
 
   //mark which cells in the collision map are connected to enough cells so
   //the robot could actually be in that space and start mapping
@@ -409,7 +799,7 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
       cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
 
       //compute number of connected cells if cell value is unknown
-      if(col_map->data.at(cell_index) == -1)
+      if(map->data.at(cell_index) == -1)
       {
         //wavefront expansion to count number of cells
         std::vector<unsigned int> wavefront;
@@ -417,95 +807,7 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
 
         wavefront.push_back(cell_index);
         connected_list.push_back(cell_index);
-        col_map->data.at(cell_index) = visited;
-
-        while(!wavefront.empty())
-        {
-          cell_index = wavefront.at(0);
-          wavefront.erase(wavefront.begin());
-
-          //explore cells neighbors in an 8-connected grid
-          unsigned int child_index;
-          int child_val;
-
-          unsigned int wavefront_cell_x, wavefront_cell_y;
-          index2cell(cell_index, cells_size_x, cells_size_y, wavefront_cell_x, wavefront_cell_y);
-
-          //8-connected grid
-          for(int i=-1; i<2; i++)
-          {
-            for(int j=-1; j<2; j++)
-            {
-              //makes sure index is inside map bounds
-              if(cell2index(wavefront_cell_x + i, wavefront_cell_y + j, cells_size_x, cells_size_y, child_index))
-              {
-                child_val = col_map->data.at(child_index);
-
-                //only count cell as connected if it is unknown (not occupied and not already expanded)
-                if(child_val == -1)
-                {
-                  //add to connected list
-                  connected_list.push_back(child_index);
-
-                  //mark cell as visited
-                  col_map->data.at(child_index) = visited;
-
-                  //add cell to wavefront
-                  wavefront.push_back(child_index);
-                }
-              }
-            }
-          }
-        }//end wavefront loop
-
-        //count connected cells
-        int connected_count = connected_list.size();
-
-        int min_connected = min_room_size;
-
-        //fill all cells with the cell count value
-        for(int k=0; k<connected_list.size(); k++)
-        {
-          if(connected_count > min_connected)
-            map->data.at(connected_list.at(k)) = robot_space; //robot could fit there
-          else
-            map->data.at(connected_list.at(k)) = unknown_placeholder; //unknown space
-        }
-      }
-    }
-  }
-  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
-  {
-    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
-    {
-      unsigned int cell_index;
-      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-
-      //compute number of connected cells if cell value is unknown
-      if(map->data.at(cell_index) == unknown_placeholder)
-        map->data.at(cell_index) = unknown_space;
-    }
-  }
-
-  //now that we have the potential robot space marked, wavefront expand
-  //from these cells to generate the occupancy map
-  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
-  {
-    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
-    {
-      unsigned int cell_index;
-      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-
-      //compute number of connected cells if the cell belongs to the robot space
-      if(map->data.at(cell_index) == robot_space)
-      {
-        //wavefront expansion to count number of cells
-        std::vector<unsigned int> wavefront;
-        std::vector<unsigned int> connected_list;
-
-        wavefront.push_back(cell_index);
-        connected_list.push_back(cell_index);
-        map->data.at(cell_index) = free_space;
+        map->data.at(cell_index) = visited;
 
         while(!wavefront.empty())
         {
@@ -529,11 +831,14 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
               {
                 child_val = map->data.at(child_index);
 
-                //only count cell as connected if it not occupied and not already expanded)
-                if(child_val!=free_space && child_val!=CellOccupied)
+                //only count cell as connected if it is unknown (not occupied and not already expanded)
+                if(child_val == -1)
                 {
+                  //add to connected list
+                  connected_list.push_back(child_index);
+
                   //mark cell as visited
-                  map->data.at(child_index) = free_space;
+                  map->data.at(child_index) = visited;
 
                   //add cell to wavefront
                   wavefront.push_back(child_index);
@@ -542,56 +847,25 @@ void OccupancyMapFromWorld::GetFreeSpace(nav_msgs::OccupancyGrid* map)
             }
           }
         }//end wavefront loop
-      }
-    }
-  }
-}
 
-void OccupancyMapFromWorld::FilterOccupied(nav_msgs::OccupancyGrid* map)
-{
-  unsigned int cells_size_x = map->info.width;
-  unsigned int cells_size_y = map->info.height;
+        //count connected cells
+        int connected_count = connected_list.size();
 
-  int8_t free_space = 0;
-  int8_t unknown_space = -1;
-  int8_t occupied = 100;
-
-  for(int cell_x=0; cell_x<cells_size_x; cell_x++)
-  {
-    for(int cell_y=0; cell_y<cells_size_y; cell_y++)
-    {
-      unsigned int cell_index;
-      unsigned int neighbor_index;
-      int8_t neighbor_val;
-      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
-
-      if(map->data.at(cell_index) == occupied)
-      {
-        map->data.at(cell_index) = unknown_space;
-        //check neighbors for free space
-        //8-connected grid
-        for(int i=-1; i<2; i++)
+        //mark cells as free if they are connected to enough cells,
+        //occupied otherwise
+        for(int k=0; k<connected_list.size(); k++)
         {
-          for(int j=-1; j<2; j++)
-          {
-            //makes sure index is inside map bounds
-            if(cell2index(cell_x + i, cell_y + j, cells_size_x, cells_size_y, neighbor_index))
-            {
-              neighbor_val = map->data.at(neighbor_index);
-
-              //set cell to occupied if at least 1 neighbor is free space
-              if(neighbor_val == free_space)
-              {
-                map->data.at(cell_index) = occupied;
-                break;
-              }
-            }
-          }
+          if(connected_count > min_connected)
+            map->data.at(connected_list.at(k)) = CellFree; //robot could fit there
+          else
+            map->data.at(connected_list.at(k)) = CellOccupied; //unknown space
         }
       }
     }
   }
 }
+
+
 
 // Register this plugin with the simulator
 GZ_REGISTER_WORLD_PLUGIN(OccupancyMapFromWorld)

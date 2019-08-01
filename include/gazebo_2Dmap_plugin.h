@@ -37,6 +37,10 @@
 #include <nav_msgs/OccupancyGrid.h>
 #include <gazebo_ros_2Dmap_plugin/GenerateMap.h>
 #include <boost/regex.h>
+#include <visualization_msgs/MarkerArray.h>
+#include <random>
+#include <sensor_msgs/LaserScan.h>
+#include <tf/transform_broadcaster.h>
 
 namespace gazebo {
 
@@ -52,8 +56,6 @@ class OccupancyMapFromWorld : public WorldPlugin {
   }
   virtual ~OccupancyMapFromWorld();
 
-
-
  protected:
 
   /// \brief Load the plugin.
@@ -64,10 +66,6 @@ class OccupancyMapFromWorld : public WorldPlugin {
   bool worldCellIntersection(const double cell_center_x, const double cell_center_y,
                              const double min_z, const double max_z,
                              const double cell_length, gazebo::physics::RayShapePtr ray);
-  
-  bool CreateOccupancyMap(const math::Vector3& map_origin,
-                          double map_size_x, double map_size_y,
-                          double map_resolution);
 
   void MarkOccupiedCells(nav_msgs::OccupancyGrid* map, double min_z, double max_z);
 
@@ -77,42 +75,26 @@ class OccupancyMapFromWorld : public WorldPlugin {
                       int cell_padding);
 
   void MarkConnected(nav_msgs::OccupancyGrid* map,
-                     int min_num_connected);
+                     int min_connected);
 
-  void GetFreeSpace(nav_msgs::OccupancyGrid* map);
+  void MapSpace(nav_msgs::OccupancyGrid* map, double noise_stddev);
 
-  void FilterOccupied(nav_msgs::OccupancyGrid* map);
+  void SimulateMapping(nav_msgs::OccupancyGrid* map,
+                       double noise_stddev);
 
-  bool CreateOccupiedSpace();
-
-  bool IsCeiling(const std::string entity)
-  {
-    boost::regex expr{"fr_\\d+rm_\\d+c"};
-
-    return boost::regex_match(entity, expr);
-  }
-
-  bool IsFloor(const std::string entity)
-  {
-    boost::regex expr{"fr_\\d+rm_\\d+f"};
-    boost::smatch res;
-    return boost::regex_search(entity, res, expr);
-  }
-
-  static void cell2world(unsigned int cell_x, unsigned int cell_y,
-                         double map_size_x, double map_size_y, double map_resolution,
+  static void cell2world(unsigned int cell_x, unsigned int cell_y, double map_resolution,
                          geometry_msgs::Point map_origin, double& world_x, double &world_y)
   {
-    world_x = cell_x * map_resolution - map_size_x/2 + map_resolution/2 + map_origin.x;
-    world_y = cell_y * map_resolution - map_size_y/2 + map_resolution/2 + map_origin.y;
+    world_x = cell_x * map_resolution + map_resolution/2 + map_origin.x;
+    world_y = cell_y * map_resolution + map_resolution/2 + map_origin.y;
   }
 
-  static void world2cell(double world_x, double world_y,
-                         double map_size_x, double map_size_y, double map_resolution,
+  static void world2cell(double world_x, double world_y, double map_resolution,
+                         geometry_msgs::Point map_origin,
                          unsigned int& cell_x, unsigned int& cell_y)
   {
-    cell_x = (world_x + map_size_x/2) / map_resolution;
-    cell_y = (world_y + map_size_y/2) / map_resolution;
+    cell_x = (world_x - map_origin.x) / map_resolution;
+    cell_y = (world_y - map_origin.y) / map_resolution;
   }
 
   static bool cell2index(int cell_x, int cell_y,
@@ -157,7 +139,13 @@ class OccupancyMapFromWorld : public WorldPlugin {
   ros::ServiceServer occ_map_service_;
   ros::ServiceServer col_map_service_;
   ros::Publisher map_pub_;
+  ros::Publisher map_pub2_;
+  ros::Publisher marker_pub_;
+  ros::Publisher scan_pub_;
+  tf::TransformBroadcaster br_;
   std::string name_;
+  visualization_msgs::Marker marker_;
+  nav_msgs::OccupancyGrid map_viz_;
 
   const int8_t CellUnknown = -1;
   const int8_t CellFree = 0;
