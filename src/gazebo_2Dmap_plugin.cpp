@@ -65,80 +65,46 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   uint32_t cells_size_x = req.size_x / req.resolution;
   uint32_t cells_size_y = req.size_y / req.resolution;
 
-  nav_msgs::OccupancyGrid* occupancy_map = new nav_msgs::OccupancyGrid();
-  occupancy_map->data.resize(cells_size_x * cells_size_y);
+  nav_msgs::OccupancyGrid* traversible_grid = new nav_msgs::OccupancyGrid();
+  traversible_grid->data.resize(cells_size_x * cells_size_y);
 
   //all cells are initially unknown
-  std::fill(occupancy_map->data.begin(), occupancy_map->data.end(), CellUnknown);
-  occupancy_map->header.stamp = ros::Time::now();
-  occupancy_map->header.frame_id = "odom"; //TODO map frame
-  occupancy_map->info.map_load_time = ros::Time(0);
-  occupancy_map->info.resolution = req.resolution;
-  occupancy_map->info.width = cells_size_x;
-  occupancy_map->info.height = cells_size_y;
-  occupancy_map->info.origin = req.origin;
-  occupancy_map->info.origin.position.x = -req.size_x/2;
-  occupancy_map->info.origin.position.y = -req.size_y/2;
+  std::fill(traversible_grid->data.begin(), traversible_grid->data.end(), CellUnknown);
+  traversible_grid->header.stamp = ros::Time::now();
+  traversible_grid->header.frame_id = "odom"; //TODO map frame
+  traversible_grid->info.map_load_time = ros::Time(0);
+  traversible_grid->info.resolution = req.resolution;
+  traversible_grid->info.width = cells_size_x;
+  traversible_grid->info.height = cells_size_y;
+  traversible_grid->info.origin = req.origin;
+  traversible_grid->info.origin.position.x = -req.size_x/2;
+  traversible_grid->info.origin.position.y = -req.size_y/2;
 
   //TODO add info to the request
   double robot_radius = 0.2;
   double robot_height = 1.0;
 
   //mark cells the robot center cannot reach
-  MarkOccupiedCells(occupancy_map, occupancy_map->info.origin.position.z,
-                    occupancy_map->info.origin.position.z+robot_height);
+  MarkOccupiedCells(traversible_grid, traversible_grid->info.origin.position.z,
+                    traversible_grid->info.origin.position.z+robot_height);
 
-  CropAtOccupied(occupancy_map, true, 10);
-
-  //std::cout << "inflating occupied cells" << std::endl;
-  InflateOccupiedCells(occupancy_map, robot_radius);
+  CropAtOccupied(traversible_grid, true, 10);
+  InflateOccupiedCells(traversible_grid, robot_radius);
 
   //min room size is 2x2 meters
-  int min_room_cells = pow(2.0/occupancy_map->info.resolution,2);
-  MarkConnected(occupancy_map, min_room_cells);
+  int min_room_cells = pow(2.0/traversible_grid->info.resolution,2);
+  MarkConnected(traversible_grid, min_room_cells);
 
   std::cout << "simlating mapping" << std::endl;
-//  SimulateMapping(occupancy_map, 0.01);
-  MapSpace(occupancy_map, 0.01);
-
-  res.map = *occupancy_map;
-  res.success = true;
-
-//  map_pub_.publish(*occupancy_map);
-//  marker_pub_.publish(marker_);
-
-//  while(ros::ok())
-//  {
-//    marker_pub_.publish(marker_);
-//    ros::Rate(10).sleep();
-//  }
-
-//  double center_x, center_y;
-//  cell2world(0, 0, occupancy_map->info.resolution,
-//             occupancy_map->info.origin.position,
-//             center_x, center_y);
-
-//  visualization_msgs::Marker cell_position_marker;
-//  cell_position_marker.type = visualization_msgs::Marker::POINTS;
-//  cell_position_marker.header.frame_id = "odom";
-//  cell_position_marker.header.stamp = ros::Time::now();
-//  cell_position_marker.pose.orientation.w = 1;
-//  cell_position_marker.color.a = 1;
-//  geometry_msgs::Point point;
-//  point.x = center_x;
-//  point.y = center_y;
-//  cell_position_marker.points.push_back(point);
-//  cell_position_marker.scale.x = 0.05;
-//  cell_position_marker.scale.y = 0.05;
-
-//  while(ros::ok())
-//  {
-//    marker_pub_.publish(cell_position_marker);
-//    ros::Rate(10).sleep();
-//  }
+  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01, false);
 
   ros::Duration dur = ros::Time::now() - now;
   std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
+
+  map_pub_.publish(occupancy_map);
+
+  res.map = occupancy_map;
+  res.success = true;
 
   return true;
 }
@@ -447,32 +413,39 @@ std::vector<double> CountingModel(std::vector<int64_t> hits_map,
   return occ_map;
 }
 
-void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
-                                     double noise_stddev)
+nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* traversible_grid,
+                                                        double noise_stddev, bool visualize)
 {
+  ///*** for visualization ***///
   ros::Publisher valid_samples_pub = nh_.advertise<geometry_msgs::PoseArray>("valid_samples", 1);
   ros::Publisher invalid_samples_pub = nh_.advertise<geometry_msgs::PoseArray>("invalid_samples", 1);
   ros::Publisher hits_map_pub = nh_.advertise<nav_msgs::OccupancyGrid>("hits_map", 1);
   ros::Publisher misses_map_pub = nh_.advertise<nav_msgs::OccupancyGrid>("misses_map", 1);
   geometry_msgs::PoseArray valid_samples;
   geometry_msgs::PoseArray invalid_samples;
-  valid_samples.header = map->header;
-  invalid_samples.header = map->header;
+  valid_samples.header = traversible_grid->header;
+  invalid_samples.header = traversible_grid->header;
 
   nav_msgs::OccupancyGrid viz_grid;
-  viz_grid.header = map->header;
-  viz_grid.info = map->info;
-  viz_grid.data.resize(map->data.size());
+  viz_grid.header = traversible_grid->header;
+  viz_grid.info = traversible_grid->info;
+  viz_grid.data.resize(traversible_grid->data.size());
 
   nav_msgs::OccupancyGrid hits_viz_grid;
-  hits_viz_grid.header = map->header;
-  hits_viz_grid.info = map->info;
-  hits_viz_grid.data.resize(map->data.size());
+  hits_viz_grid.header = traversible_grid->header;
+  hits_viz_grid.info = traversible_grid->info;
+  hits_viz_grid.data.resize(traversible_grid->data.size());
 
   nav_msgs::OccupancyGrid miss_viz_grid;
-  miss_viz_grid.header = map->header;
-  miss_viz_grid.info = map->info;
-  miss_viz_grid.data.resize(map->data.size());
+  miss_viz_grid.header = traversible_grid->header;
+  miss_viz_grid.info = traversible_grid->info;
+  miss_viz_grid.data.resize(traversible_grid->data.size());
+  /// *** *** ///
+
+  nav_msgs::OccupancyGrid occ_map;
+  occ_map.header = traversible_grid->header;
+  occ_map.info = traversible_grid->info;
+  occ_map.data.resize(traversible_grid->data.size());
 
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
   engine->InitForThread();
@@ -480,16 +453,16 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
       boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
         engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
 
-  uint32_t cells_size_x = map->info.width;
-  uint32_t cells_size_y = map->info.height;
-  double map_resolution = map->info.resolution;
-  double map_z = map->info.origin.position.z;
+  uint32_t cells_size_x = traversible_grid->info.width;
+  uint32_t cells_size_y = traversible_grid->info.height;
+  double map_resolution = traversible_grid->info.resolution;
+  double map_z = traversible_grid->info.origin.position.z;
 
   //map boundaries for pose sampling
-  double x_min = map->info.origin.position.x;
-  double x_max = map->info.origin.position.x + cells_size_x*map_resolution;
-  double y_min = map->info.origin.position.y;
-  double y_max = map->info.origin.position.y + cells_size_y*map_resolution;
+  double x_min = traversible_grid->info.origin.position.x;
+  double x_max = traversible_grid->info.origin.position.x + cells_size_x*map_resolution;
+  double y_min = traversible_grid->info.origin.position.y;
+  double y_max = traversible_grid->info.origin.position.y + cells_size_y*map_resolution;
   double theta_min = 0;
   double theta_max = 2*M_PI;
 
@@ -499,13 +472,16 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
   std::uniform_real_distribution<> y_sampler(y_min, y_max);
   std::uniform_real_distribution<> theta_sampler(theta_min, theta_max);
 
+  //hits and misses for counting model
   std::vector<int64_t> hits_map, misses_map;
-  hits_map.resize(map->data.size());
-  misses_map.resize(map->data.size());
+  hits_map.resize(traversible_grid->data.size());
+  misses_map.resize(traversible_grid->data.size());
 
   int samples_per_m2 = 100;
-  int num_pose_samples = samples_per_m2 * (map->info.width*map_resolution) * (map->info.height*map_resolution);
+  int num_pose_samples = samples_per_m2 * (cells_size_x*map_resolution) * (cells_size_y*map_resolution);
 
+  //generate pose samples and simulate laser array from poses if they are
+  //in traversible space. Record hits and misses to compute cell occupancy
   for(int sample_i=0; sample_i<num_pose_samples; sample_i++)
   {
     //sample random x,y and theta
@@ -522,10 +498,11 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
 
     //check if pose lies within reachable space
     unsigned int map_x, map_y, map_index;
-    world2cell(pose_x, pose_y, map_resolution, map->info.origin.position, map_x, map_y);
+    world2cell(pose_x, pose_y, map_resolution,
+               traversible_grid->info.origin.position, map_x, map_y);
     cell2index(map_x, map_y, cells_size_x, cells_size_y, map_index);
 
-    if(map->data.at(map_index) == CellFree)
+    if(traversible_grid->data.at(map_index) == CellFree)
     {
       valid_samples.poses.push_back(sampled_pose);
 
@@ -560,16 +537,14 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
         double hit_x = pose_x + dist*cos(ray_angle);
         double hit_y = pose_y + dist*sin(ray_angle);
 
-        world2cell(hit_x, hit_y, map_resolution, map->info.origin.position,
+        world2cell(hit_x, hit_y, map_resolution, traversible_grid->info.origin.position,
                    hit_cell_x, hit_cell_y);
 
         //make sure cell is inside map boundaries
-        if(cell2index(hit_cell_x, hit_cell_y, map->info.width, map->info.height,
+        if(cell2index(hit_cell_x, hit_cell_y, cells_size_x, cells_size_y,
                       hit_index))
         {
           viz_grid.data.at(hit_index) = 200;
-          if(hits_viz_grid.data.at(hit_index) < 100)
-            hits_viz_grid.data.at(hit_index) += 10; //choose larger value for visualization
 
           if(hits_map.at(hit_index) < INT64_MAX)
             hits_map.at(hit_index) += 1;
@@ -579,7 +554,7 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
 
         //get missed cells
         //walk along the ray to see which cells were hit
-        double dist_incr = 0.25*map->info.resolution;
+        double dist_incr = 0.25*map_resolution;
         double ray_dist = dist-dist_incr;
         unsigned int last_miss_index = UINT_MAX;
 
@@ -590,19 +565,17 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
           double miss_x = pose_x + ray_dist*cos(ray_angle);
           double miss_y = pose_y + ray_dist*sin(ray_angle);
 
-          world2cell(miss_x, miss_y, map_resolution, map->info.origin.position,
+          world2cell(miss_x, miss_y, map_resolution, traversible_grid->info.origin.position,
                      miss_cell_x, miss_cell_y);
 
           //make sure cell is inside map boundaries
-          if(cell2index(miss_cell_x, miss_cell_y, map->info.width, map->info.height,
+          if(cell2index(miss_cell_x, miss_cell_y, cells_size_x, cells_size_y,
                         miss_index))
           {
             //make sure we didn't already count this cell
             if(miss_index != hit_index && miss_index != last_miss_index)
             {
               viz_grid.data.at(miss_index) = 50;
-              if(miss_viz_grid.data.at(miss_index) < 100)
-                miss_viz_grid.data.at(miss_index) += 10; //choose larger value for visualization
 
               if(misses_map.at(miss_index) < INT64_MAX)
                 misses_map.at(miss_index) += 1;
@@ -615,53 +588,80 @@ void OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* map,
 
           ray_dist-=dist_incr;
         }
-        marker_.type = visualization_msgs::Marker::LINE_LIST;
-        marker_.header = map->header;
-        geometry_msgs::Point start, end;
-        start.x = pose_x;
-        start.y = pose_y;
-        start.z = map_z;
-        end.x = hit_x;
-        end.y = hit_y;
-        end.z = map_z;
-        marker_.points.clear();
-        marker_.points.push_back(start);
-        marker_.points.push_back(end);
-        marker_.scale.x = 0.01;
-        marker_.color.a = 1;
-        marker_.color.b = 1;
 
-        marker_pub_.publish(marker_);
-        map_pub2_.publish(viz_grid);
-        ros::Duration(0.025).sleep();
+        if(visualize)
+        {
+          marker_.type = visualization_msgs::Marker::LINE_LIST;
+          marker_.header = traversible_grid->header;
+          geometry_msgs::Point start, end;
+          start.x = pose_x;
+          start.y = pose_y;
+          start.z = map_z;
+          end.x = hit_x;
+          end.y = hit_y;
+          end.z = map_z;
+          marker_.points.clear();
+          marker_.points.push_back(start);
+          marker_.points.push_back(end);
+          marker_.scale.x = 0.01;
+          marker_.color.a = 1;
+          marker_.color.b = 1;
 
-        valid_samples_pub.publish(valid_samples);
+          marker_pub_.publish(marker_);
+          valid_samples_pub.publish(valid_samples);
+          invalid_samples_pub.publish(invalid_samples);
+          map_pub2_.publish(viz_grid);
+          ros::Duration(0.025).sleep();
+        }
+
         scan_angle += angle_incr;
       }
 
-      std::vector<double> occupancy_grid = CountingModel(hits_map, misses_map);
-      for(int map_i=0; map_i<occupancy_grid.size(); map_i++)
+      if(visualize)
       {
-        viz_grid.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
-      }
+        int64_t max_num_hits = *std::max_element(hits_map.begin(), hits_map.end());
+        int64_t max_num_misses = *std::max_element(misses_map.begin(), misses_map.end());
 
-      std::cout << "publish occupancy map: " << std::endl;
-      for(int loop=0; loop<5; loop++)
-      {
-        hits_map_pub.publish(hits_viz_grid);
-        misses_map_pub.publish(miss_viz_grid);
-        map_pub_.publish(viz_grid);
-        ros::Rate(100).sleep();
-      }
+        std::vector<double> occupancy_grid = CountingModel(hits_map, misses_map);
 
-      std::cout << "pose sample: " << sample_i << std::endl;
+        for(int map_i=0; map_i<occupancy_grid.size(); map_i++)
+        {
+          //current occupancy map
+          occ_map.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
+
+          //(normalized) hits map
+          hits_viz_grid.data.at(map_i) = double(hits_map.at(map_i))/double(max_num_hits) * CellOccupied;
+
+          //(normalized) miss map
+          miss_viz_grid.data.at(map_i) = double(misses_map.at(map_i))/double(max_num_misses) * CellOccupied;
+        }
+
+        std::cout << "publish occupancy map: " << std::endl;
+        for(int loop=0; loop<5; loop++)
+        {
+          hits_map_pub.publish(hits_viz_grid);
+          misses_map_pub.publish(miss_viz_grid);
+          map_pub_.publish(occ_map);
+          ros::Rate(100).sleep();
+        }
+      }
     }
     else //map is not in free space
     {
       invalid_samples.poses.push_back(sampled_pose);
-      invalid_samples_pub.publish(invalid_samples);
     }
   }
+
+  //calculate map occupancy based on counting model
+  std::vector<double> occupancy_grid = CountingModel(hits_map, misses_map);
+
+  for(int map_i=0; map_i<occupancy_grid.size(); map_i++)
+  {
+    //calculate occupancy map
+    occ_map.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
+  }
+
+  return occ_map;
 }
 
 bool OccupancyMapFromWorld::worldCellIntersection(const double cell_center_x,

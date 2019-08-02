@@ -78,7 +78,7 @@ class OccupancyMapFromWorld : public WorldPlugin {
   void MarkConnected(nav_msgs::OccupancyGrid* map,
                      int min_connected);
 
-  void MapSpace(nav_msgs::OccupancyGrid* map, double noise_stddev);
+  nav_msgs::OccupancyGrid MapSpace(nav_msgs::OccupancyGrid* traversible_grid, double noise_stddev, bool visualize);
 
   void SimulateMapping(nav_msgs::OccupancyGrid* map,
                        double noise_stddev);
