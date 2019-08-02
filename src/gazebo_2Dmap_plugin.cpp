@@ -54,7 +54,7 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
                                                gazebo_ros_2Dmap_plugin::GenerateMap::Response& res)
 {
   std::cout << "generate occupancy map service call received" << std::endl;
-  if(req.size_z != 0.0)
+  if(req.extend_z != 0.0)
   {
     ROS_WARN("non-zero map size_z accountered in occupancy service callback, "
              "will be ignored. Did you want to generate a collision map instead?");
@@ -62,8 +62,8 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
 
   ros::Time now = ros::Time::now();
 
-  uint32_t cells_size_x = req.size_x / req.resolution;
-  uint32_t cells_size_y = req.size_y / req.resolution;
+  uint32_t cells_size_x = req.cells_x;
+  uint32_t cells_size_y = req.cells_y;
 
   nav_msgs::OccupancyGrid* traversible_grid = new nav_msgs::OccupancyGrid();
   traversible_grid->data.resize(cells_size_x * cells_size_y);
@@ -77,8 +77,6 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   traversible_grid->info.width = cells_size_x;
   traversible_grid->info.height = cells_size_y;
   traversible_grid->info.origin = req.origin;
-  traversible_grid->info.origin.position.x = -req.size_x/2;
-  traversible_grid->info.origin.position.y = -req.size_y/2;
 
   //TODO add info to the request
   double robot_radius = 0.2;
@@ -89,6 +87,14 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
                     traversible_grid->info.origin.position.z+robot_height);
 
   CropAtOccupied(traversible_grid, true, 10);
+
+  if(traversible_grid->data.empty())
+  {
+    std::cout << "could not generate occupancy map, no collisions found" << std::endl;
+    res.success = false;
+    return true;
+  }
+
   InflateOccupiedCells(traversible_grid, robot_radius);
 
   //min room size is 2x2 meters
@@ -96,10 +102,10 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   MarkConnected(traversible_grid, min_room_cells);
 
   std::cout << "simlating mapping" << std::endl;
-  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01, false);
+  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01, true);
 
   ros::Duration dur = ros::Time::now() - now;
-  std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
+  std::cout << "occupancy map generation took " << dur.toSec() << " seconds" << std::endl;
 
   map_pub_.publish(occupancy_map);
 
@@ -113,43 +119,43 @@ bool OccupancyMapFromWorld::ColServiceCallback(gazebo_ros_2Dmap_plugin::Generate
                                                gazebo_ros_2Dmap_plugin::GenerateMap::Response& res)
 {
   std::cout << "generate collision map service call received" << std::endl;
-  if(req.size_z == 0.0)
+  if(req.extend_z == 0.0)
   {
     ROS_WARN("zero map size_z accountered in collision map service callback, "
              "Did you want to generate an occupancy map instead?");
   }
 
+  ros::Duration(2.0).sleep();
   ros::Time now = ros::Time::now();
 
-  uint32_t cells_size_x = req.size_x / req.resolution;
-  uint32_t cells_size_y = req.size_y / req.resolution;
+  uint32_t cells_size_x = req.cells_x;
+  uint32_t cells_size_y = req.cells_y;
 
-  nav_msgs::OccupancyGrid* occupancy_map = new nav_msgs::OccupancyGrid();
-  occupancy_map->data.resize(cells_size_x * cells_size_y);
+  nav_msgs::OccupancyGrid* collision_map = new nav_msgs::OccupancyGrid();
+  collision_map->data.resize(cells_size_x * cells_size_y);
 
   //all cells are initially free
-  std::fill(occupancy_map->data.begin(), occupancy_map->data.end(), CellFree);
-  occupancy_map->header.stamp = ros::Time::now();
-  occupancy_map->header.frame_id = "odom"; //TODO map frame
-  occupancy_map->info.map_load_time = ros::Time(0);
-  occupancy_map->info.resolution = req.resolution;
-  occupancy_map->info.width = cells_size_x;
-  occupancy_map->info.height = cells_size_y;
-  occupancy_map->info.origin = req.origin;
+  std::fill(collision_map->data.begin(), collision_map->data.end(), CellFree);
+  collision_map->header.stamp = ros::Time::now();
+  collision_map->header.frame_id = "odom"; //TODO map frame
+  collision_map->info.map_load_time = ros::Time(0);
+  collision_map->info.resolution = req.resolution;
+  collision_map->info.width = cells_size_x;
+  collision_map->info.height = cells_size_y;
+  collision_map->info.origin = req.origin;
+  //collision_map->info.origin.position.x = -req.size_x/2;
+  //collision_map->info.origin.position.y = -req.size_y/2;
 
-  MarkOccupiedCells(occupancy_map, occupancy_map->info.origin.position.z - req.size_z/2,
-                    occupancy_map->info.origin.position.z + req.size_z/2);
+  MarkOccupiedCells(collision_map, collision_map->info.origin.position.z - req.extend_z/2,
+                    collision_map->info.origin.position.z + req.extend_z/2);
 
-  occupancy_map->info.origin.position.x -= req.size_x/2;
-  occupancy_map->info.origin.position.y -= req.size_y/2;
-
-  res.map = *occupancy_map;
+  res.map = *collision_map;
   res.success = true;
 
-//  map_pub_.publish(*occupancy_map);
+  map_pub2_.publish(*collision_map);
 
   ros::Duration dur = ros::Time::now() - now;
-  std::cout << "map generation took " << dur.toSec() << " seconds" << std::endl;
+  std::cout << "collision map generation took " << dur.toSec() << " seconds" << std::endl;
 
   return true;
 }
@@ -311,7 +317,7 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
   return;
 }
 
-// this works with gmappin: rosrun gmapping slam_gmapping
+// this works with gmapping: rosrun gmapping slam_gmapping
 // requires to publish static trafo between base_link and laser frames:
 // rosrun tf static_transform_publisher 0 0 0 0 0 0 baslink laser 10
 void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
@@ -611,7 +617,7 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
           valid_samples_pub.publish(valid_samples);
           invalid_samples_pub.publish(invalid_samples);
           map_pub2_.publish(viz_grid);
-          ros::Duration(0.025).sleep();
+          ros::Duration(1.0).sleep();
         }
 
         scan_angle += angle_incr;

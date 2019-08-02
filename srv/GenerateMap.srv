@@ -1,7 +1,7 @@
 geometry_msgs/Pose origin
-float32 size_x
-float32 size_y
-float32 size_z
+int16 cells_x
+int16 cells_y
+float32 extend_z
 float32 resolution
 ---
 nav_msgs/OccupancyGrid map
