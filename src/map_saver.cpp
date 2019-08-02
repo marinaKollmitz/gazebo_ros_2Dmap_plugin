@@ -80,13 +80,17 @@ class MapGenerator
       for(unsigned int y = 0; y < map->info.height; y++) {
         for(unsigned int x = 0; x < map->info.width; x++) {
           unsigned int i = x + (map->info.height - y - 1) * map->info.width;
-          if (map->data[i] >= 0 && map->data[i] <= threshold_free_) { //occ [0,0.1)
-            fputc(254, out);
-          } else if (map->data[i] <= 100 && map->data[i] >= threshold_occupied_) { //occ (0.65,1]
-            fputc(000, out);
-          } else { //occ [0.1,0.65]
-            fputc(205, out);
-          }
+          double normalizer = 254.0/100.0;
+          std::cout << "map data " << map->data[i] << std::endl;
+          std::cout << "normalized " << (100-int(map->data[i]))*normalizer << std::endl;
+          fputc((100-int(map->data[i]))*normalizer, out);
+//          if (map->data[i] >= 0 && map->data[i] <= threshold_free_) { //occ [0,0.1)
+//            fputc(254, out);
+//          } else if (map->data[i] <= 100 && map->data[i] >= threshold_occupied_) { //occ (0.65,1]
+//            fputc(000, out);
+//          } else { //occ [0.1,0.65]
+//            fputc(205, out);
+//          }
         }
       }
 
@@ -139,8 +143,8 @@ free_thresh: 0.196
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "map_saver");
-  int threshold_occupied = 100;
-  int threshold_free = 0;
+  int threshold_occupied = 65;
+  int threshold_free = 20;
 
   for(int i=1; i<argc; i++)
   {
