@@ -78,6 +78,9 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   traversible_grid->info.height = cells_size_y;
   traversible_grid->info.origin = req.origin;
 
+  ros::Publisher traversible_pub = nh_.advertise<nav_msgs::OccupancyGrid>("traversible_map", 1);
+  ros::Publisher gt_pub = nh_.advertise<nav_msgs::OccupancyGrid>("gt_map", 1);
+
   //TODO add info to the request
   double robot_radius = 0.2;
   double robot_height = 1.0;
@@ -101,8 +104,18 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   int min_room_cells = pow(2.0/traversible_grid->info.resolution,2);
   MarkConnected(traversible_grid, min_room_cells);
 
+  //for visualizing gt map
+  nav_msgs::OccupancyGrid gt_map;
+  gt_map = *traversible_grid;
+  std::fill(gt_map.data.begin(), gt_map.data.end(), CellFree);
+  MarkOccupiedCells(&gt_map, gt_map.info.origin.position.z, gt_map.info.origin.position.z);
+
+  traversible_pub.publish(*traversible_grid);
+  gt_pub.publish(gt_map);
+
   std::cout << "simlating mapping" << std::endl;
-  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01, true);
+  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01,
+                                                   true, true);
 
   ros::Duration dur = ros::Time::now() - now;
   std::cout << "occupancy map generation took " << dur.toSec() << " seconds" << std::endl;
@@ -420,7 +433,8 @@ std::vector<double> CountingModel(std::vector<int64_t> hits_map,
 }
 
 nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid* traversible_grid,
-                                                        double noise_stddev, bool visualize)
+                                                        double noise_stddev, bool visualize_rays,
+                                                        bool visualize_steps)
 {
   ///*** for visualization ***///
   ros::Publisher valid_samples_pub = nh_.advertise<geometry_msgs::PoseArray>("valid_samples", 1);
@@ -595,7 +609,7 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
           ray_dist-=dist_incr;
         }
 
-        if(visualize)
+        if(visualize_rays)
         {
           marker_.type = visualization_msgs::Marker::LINE_LIST;
           marker_.header = traversible_grid->header;
@@ -617,13 +631,17 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
           valid_samples_pub.publish(valid_samples);
           invalid_samples_pub.publish(invalid_samples);
           map_pub2_.publish(viz_grid);
-          ros::Duration(1.0).sleep();
+          std::cout << "ray viz: press enter to continue, c to exit ray viz mode";
+          int c = getchar();
+          putchar(c);
+          if(c == 'c')
+            visualize_rays = false;
         }
 
         scan_angle += angle_incr;
       }
 
-      if(visualize)
+      if(visualize_steps)
       {
         int64_t max_num_hits = *std::max_element(hits_map.begin(), hits_map.end());
         int64_t max_num_misses = *std::max_element(misses_map.begin(), misses_map.end());
@@ -650,6 +668,13 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
           map_pub_.publish(occ_map);
           ros::Rate(100).sleep();
         }
+        valid_samples_pub.publish(valid_samples);
+        invalid_samples_pub.publish(invalid_samples);
+        std::cout << "map viz: press enter to continue, c to exit map step viz mode";
+        int c = getchar();
+        putchar(c);
+        if(c == 'c')
+          visualize_steps = false;
       }
     }
     else //map is not in free space
@@ -658,6 +683,9 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
     }
   }
 
+  int64_t max_num_hits = *std::max_element(hits_map.begin(), hits_map.end());
+  int64_t max_num_misses = *std::max_element(misses_map.begin(), misses_map.end());
+
   //calculate map occupancy based on counting model
   std::vector<double> occupancy_grid = CountingModel(hits_map, misses_map);
 
@@ -665,6 +693,21 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
   {
     //calculate occupancy map
     occ_map.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
+
+    //(normalized) hits map
+    hits_viz_grid.data.at(map_i) = double(hits_map.at(map_i))/double(max_num_hits) * CellOccupied;
+
+    //(normalized) miss map
+    miss_viz_grid.data.at(map_i) = double(misses_map.at(map_i))/double(max_num_misses) * CellOccupied;
+  }
+
+  for(int i=0; i<10; i++)
+  {
+    valid_samples_pub.publish(valid_samples);
+    invalid_samples_pub.publish(invalid_samples);
+    hits_map_pub.publish(hits_viz_grid);
+    misses_map_pub.publish(miss_viz_grid);
+    ros::Duration(0.1).sleep();
   }
 
   return occ_map;

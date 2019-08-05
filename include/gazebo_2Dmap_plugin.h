@@ -42,6 +42,7 @@
 #include <sensor_msgs/LaserScan.h>
 #include <tf/transform_broadcaster.h>
 #include <geometry_msgs/PoseArray.h>
+#include <stdio.h>
 
 namespace gazebo {
 
@@ -78,7 +79,9 @@ class OccupancyMapFromWorld : public WorldPlugin {
   void MarkConnected(nav_msgs::OccupancyGrid* map,
                      int min_connected);
 
-  nav_msgs::OccupancyGrid MapSpace(nav_msgs::OccupancyGrid* traversible_grid, double noise_stddev, bool visualize);
+  nav_msgs::OccupancyGrid MapSpace(nav_msgs::OccupancyGrid* traversible_grid,
+                                   double noise_stddev,
+                                   bool visualize_rays, bool visualize_steps);
 
   void SimulateMapping(nav_msgs::OccupancyGrid* map,
                        double noise_stddev);
