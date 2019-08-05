@@ -114,15 +114,17 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   gt_pub.publish(gt_map);
 
   std::cout << "simlating mapping" << std::endl;
-  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01,
-                                                   true, true);
+//  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01,
+//                                                   true, true);
+
+  SimulateMapping(traversible_grid, 0.01);
 
   ros::Duration dur = ros::Time::now() - now;
   std::cout << "occupancy map generation took " << dur.toSec() << " seconds" << std::endl;
 
-  map_pub_.publish(occupancy_map);
+//  map_pub_.publish(traversible_grid);
 
-  res.map = occupancy_map;
+//  res.map = occupancy_map;
   res.success = true;
 
   return true;
@@ -332,8 +334,8 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
 
 // this works with gmapping: rosrun gmapping slam_gmapping
 // requires to publish static trafo between base_link and laser frames:
-// rosrun tf static_transform_publisher 0 0 0 0 0 0 baslink laser 10
-void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
+// rosrun tf static_transform_publisher 0 0 0 0 0 0 base_link laser 10
+void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* traversible_grid,
                                             double noise_stddev)
 {
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
@@ -342,13 +344,32 @@ void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
       boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
         engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
 
-  uint32_t cells_size_x = map->info.width;
-  uint32_t cells_size_y = map->info.height;
-  double map_resolution = map->info.resolution;
-  double map_z = map->info.origin.position.z;
+  uint32_t cells_size_x = traversible_grid->info.width;
+  uint32_t cells_size_y = traversible_grid->info.height;
+  double map_resolution = traversible_grid->info.resolution;
+  double map_z = traversible_grid->info.origin.position.z;
+
+  //map boundaries for pose sampling
+  double x_min = traversible_grid->info.origin.position.x;
+  double x_max = traversible_grid->info.origin.position.x + cells_size_x*map_resolution;
+  double y_min = traversible_grid->info.origin.position.y;
+  double y_max = traversible_grid->info.origin.position.y + cells_size_y*map_resolution;
+  double theta_min = 0;
+  double theta_max = 2*M_PI;
 
   std::default_random_engine generator;
-  std::normal_distribution<double> distribution(0.0,noise_stddev);
+  std::normal_distribution<double> noise_sampler(0.0,noise_stddev);
+  std::uniform_real_distribution<> x_sampler(x_min, x_max);
+  std::uniform_real_distribution<> y_sampler(y_min, y_max);
+  std::uniform_real_distribution<> theta_sampler(theta_min, theta_max);
+
+  //hits and misses for counting model
+  std::vector<int64_t> hits_map, misses_map;
+  hits_map.resize(traversible_grid->data.size());
+  misses_map.resize(traversible_grid->data.size());
+
+  int samples_per_m2 = 100;
+  int num_pose_samples = samples_per_m2 * (cells_size_x*map_resolution) * (cells_size_y*map_resolution);
 
   sensor_msgs::LaserScan scan;
   scan.header.frame_id = "laser";
@@ -362,49 +383,59 @@ void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
   scan.range_min = 0.0;
   tf::Transform transform;
 
-  for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
+  for(int sample_i=0; sample_i<num_pose_samples; sample_i++)
   {
-    for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
+    //sample random x,y and theta
+    double pose_x = x_sampler(generator);
+    double pose_y = y_sampler(generator);
+    double pose_theta = theta_sampler(generator);
+
+//    std::cout << "pose_x: " << pose_x << std::endl;
+
+//    geometry_msgs::Pose sampled_pose;
+//    sampled_pose.position.x = pose_x;
+//    sampled_pose.position.y = pose_y;
+//    sampled_pose.position.z = map_z;
+//    tf::Quaternion quat = tf::createQuaternionFromRPY(0,0,pose_theta);
+//    tf::quaternionTFToMsg(quat, sampled_pose.orientation);
+
+    //check if pose lies within reachable space
+    unsigned int map_x, map_y, map_index;
+    world2cell(pose_x, pose_y, map_resolution,
+               traversible_grid->info.origin.position, map_x, map_y);
+    cell2index(map_x, map_y, cells_size_x, cells_size_y, map_index);
+
+    if(traversible_grid->data.at(map_index) == CellFree)
     {
-      unsigned int cell_index;
-      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
+      scan.ranges.clear();
 
-      //check if cell is reachable by robot
-      if(map->data.at(cell_index) == CellFree)
+      double scan_angle = scan.angle_min;
+      while(scan_angle <= scan.angle_max)
       {
-        double center_x, center_y;
-        //start ray array from cell center
-        cell2world(cell_x, cell_y, map_resolution,
-                   map->info.origin.position, center_x, center_y);
+        double ray_angle = pose_theta + scan_angle;
+        double end_x = pose_x + max_range * cos(ray_angle);
+        double end_y = pose_y + max_range * sin(ray_angle);
 
-        scan.ranges.clear();
+        double dist;
+        std::string entity_name;
 
-        double ray_angle = scan.angle_min;
-        while(ray_angle <= scan.angle_max)
-        {
-          double end_x = center_x + max_range * cos(ray_angle);
-          double end_y = center_y + max_range * sin(ray_angle);
+        ray->SetPoints(math::Vector3(pose_x, pose_y, map_z),
+                       math::Vector3(end_x, end_y, map_z));
+        ray->GetIntersection(dist, entity_name);
 
-          double dist;
-          std::string entity_name;
+        //add noise to measured distance
+        dist = dist + noise_sampler(generator);
+        scan.ranges.push_back(dist);
 
-          ray->SetPoints(math::Vector3(center_x, center_y, map_z),
-                         math::Vector3(end_x, end_y, map_z));
-          ray->GetIntersection(dist, entity_name);
-
-          //add noise to measured distance
-          dist = dist + distribution(generator);
-          scan.ranges.push_back(dist);
-
-          ray_angle += angle_incr;
-        }
-        scan.header.stamp = ros::Time::now();
-        transform.setOrigin(tf::Vector3(center_x, center_y, map_z));
-        transform.setRotation(tf::Quaternion(0, 0, 0, 1));
-        br_.sendTransform(tf::StampedTransform(transform, scan.header.stamp, "odom", "base_link"));
-        scan_pub_.publish(scan);
-        ros::Duration(0.05).sleep();
+        scan_angle += angle_incr;
       }
+      scan.header.stamp = ros::Time::now();
+      transform.setOrigin(tf::Vector3(pose_x, pose_y, map_z));
+      tf::Quaternion quat = tf::createQuaternionFromRPY(0,0,pose_theta);
+      transform.setRotation(quat);
+      br_.sendTransform(tf::StampedTransform(transform, scan.header.stamp, "odom", "base_link"));
+      scan_pub_.publish(scan);
+      ros::Duration(0.25).sleep();
     }
   }
 }
