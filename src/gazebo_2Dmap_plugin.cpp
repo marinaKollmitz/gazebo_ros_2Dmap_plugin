@@ -36,7 +36,7 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   world_ = _parent;
 
-  map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("map", 1);
+  map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("occ_map", 1);
   map_pub2_ = nh_.advertise<nav_msgs::OccupancyGrid>("map2", 1);
   marker_pub_ = nh_.advertise<visualization_msgs::Marker>("viz_marker", 1);
   scan_pub_ = nh_.advertise<sensor_msgs::LaserScan>("scan",1);
@@ -114,17 +114,17 @@ bool OccupancyMapFromWorld::OccServiceCallback(gazebo_ros_2Dmap_plugin::Generate
   gt_pub.publish(gt_map);
 
   std::cout << "simlating mapping" << std::endl;
-//  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01,
-//                                                   true, true);
+//  SimulateMapping(traversible_grid, 0.01);
+  nav_msgs::OccupancyGrid occupancy_map = MapSpace(traversible_grid, 0.01,
+                                                   true, true);
 
-  SimulateMapping(traversible_grid, 0.01);
 
   ros::Duration dur = ros::Time::now() - now;
   std::cout << "occupancy map generation took " << dur.toSec() << " seconds" << std::endl;
 
-//  map_pub_.publish(traversible_grid);
+  map_pub_.publish(occupancy_map);
 
-//  res.map = occupancy_map;
+  res.map = occupancy_map;
   res.success = true;
 
   return true;
@@ -334,8 +334,8 @@ void OccupancyMapFromWorld::MarkOccupiedCells(nav_msgs::OccupancyGrid *map,
 
 // this works with gmapping: rosrun gmapping slam_gmapping
 // requires to publish static trafo between base_link and laser frames:
-// rosrun tf static_transform_publisher 0 0 0 0 0 0 base_link laser 10
-void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* traversible_grid,
+// rosrun tf static_transform_publisher 0 0 0 0 0 0 baslink laser 10
+void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* map,
                                             double noise_stddev)
 {
   gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
@@ -344,32 +344,13 @@ void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* traversible
       boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
         engine->CreateShape("ray", gazebo::physics::CollisionPtr()));
 
-  uint32_t cells_size_x = traversible_grid->info.width;
-  uint32_t cells_size_y = traversible_grid->info.height;
-  double map_resolution = traversible_grid->info.resolution;
-  double map_z = traversible_grid->info.origin.position.z;
-
-  //map boundaries for pose sampling
-  double x_min = traversible_grid->info.origin.position.x;
-  double x_max = traversible_grid->info.origin.position.x + cells_size_x*map_resolution;
-  double y_min = traversible_grid->info.origin.position.y;
-  double y_max = traversible_grid->info.origin.position.y + cells_size_y*map_resolution;
-  double theta_min = 0;
-  double theta_max = 2*M_PI;
+  uint32_t cells_size_x = map->info.width;
+  uint32_t cells_size_y = map->info.height;
+  double map_resolution = map->info.resolution;
+  double map_z = map->info.origin.position.z;
 
   std::default_random_engine generator;
-  std::normal_distribution<double> noise_sampler(0.0,noise_stddev);
-  std::uniform_real_distribution<> x_sampler(x_min, x_max);
-  std::uniform_real_distribution<> y_sampler(y_min, y_max);
-  std::uniform_real_distribution<> theta_sampler(theta_min, theta_max);
-
-  //hits and misses for counting model
-  std::vector<int64_t> hits_map, misses_map;
-  hits_map.resize(traversible_grid->data.size());
-  misses_map.resize(traversible_grid->data.size());
-
-  int samples_per_m2 = 100;
-  int num_pose_samples = samples_per_m2 * (cells_size_x*map_resolution) * (cells_size_y*map_resolution);
+  std::normal_distribution<double> distribution(0.0,noise_stddev);
 
   sensor_msgs::LaserScan scan;
   scan.header.frame_id = "laser";
@@ -383,59 +364,49 @@ void OccupancyMapFromWorld::SimulateMapping(nav_msgs::OccupancyGrid* traversible
   scan.range_min = 0.0;
   tf::Transform transform;
 
-  for(int sample_i=0; sample_i<num_pose_samples; sample_i++)
+  for(uint32_t cell_x=0; cell_x<cells_size_x; cell_x++)
   {
-    //sample random x,y and theta
-    double pose_x = x_sampler(generator);
-    double pose_y = y_sampler(generator);
-    double pose_theta = theta_sampler(generator);
-
-//    std::cout << "pose_x: " << pose_x << std::endl;
-
-//    geometry_msgs::Pose sampled_pose;
-//    sampled_pose.position.x = pose_x;
-//    sampled_pose.position.y = pose_y;
-//    sampled_pose.position.z = map_z;
-//    tf::Quaternion quat = tf::createQuaternionFromRPY(0,0,pose_theta);
-//    tf::quaternionTFToMsg(quat, sampled_pose.orientation);
-
-    //check if pose lies within reachable space
-    unsigned int map_x, map_y, map_index;
-    world2cell(pose_x, pose_y, map_resolution,
-               traversible_grid->info.origin.position, map_x, map_y);
-    cell2index(map_x, map_y, cells_size_x, cells_size_y, map_index);
-
-    if(traversible_grid->data.at(map_index) == CellFree)
+    for(uint32_t cell_y=0; cell_y<cells_size_y; cell_y++)
     {
-      scan.ranges.clear();
+      unsigned int cell_index;
+      cell2index(cell_x, cell_y, cells_size_x, cells_size_y, cell_index);
 
-      double scan_angle = scan.angle_min;
-      while(scan_angle <= scan.angle_max)
+      //check if cell is reachable by robot
+      if(map->data.at(cell_index) == CellFree)
       {
-        double ray_angle = pose_theta + scan_angle;
-        double end_x = pose_x + max_range * cos(ray_angle);
-        double end_y = pose_y + max_range * sin(ray_angle);
+        double center_x, center_y;
+        //start ray array from cell center
+        cell2world(cell_x, cell_y, map_resolution,
+                   map->info.origin.position, center_x, center_y);
 
-        double dist;
-        std::string entity_name;
+        scan.ranges.clear();
 
-        ray->SetPoints(math::Vector3(pose_x, pose_y, map_z),
-                       math::Vector3(end_x, end_y, map_z));
-        ray->GetIntersection(dist, entity_name);
+        double ray_angle = scan.angle_min;
+        while(ray_angle <= scan.angle_max)
+        {
+          double end_x = center_x + max_range * cos(ray_angle);
+          double end_y = center_y + max_range * sin(ray_angle);
 
-        //add noise to measured distance
-        dist = dist + noise_sampler(generator);
-        scan.ranges.push_back(dist);
+          double dist;
+          std::string entity_name;
 
-        scan_angle += angle_incr;
+          ray->SetPoints(math::Vector3(center_x, center_y, map_z),
+                         math::Vector3(end_x, end_y, map_z));
+          ray->GetIntersection(dist, entity_name);
+
+          //add noise to measured distance
+          dist = dist + distribution(generator);
+          scan.ranges.push_back(dist);
+
+          ray_angle += angle_incr;
+        }
+        scan.header.stamp = ros::Time::now();
+        transform.setOrigin(tf::Vector3(center_x, center_y, map_z));
+        transform.setRotation(tf::Quaternion(0, 0, 0, 1));
+        br_.sendTransform(tf::StampedTransform(transform, scan.header.stamp, "odom", "base_link"));
+        scan_pub_.publish(scan);
+        ros::Duration(0.05).sleep();
       }
-      scan.header.stamp = ros::Time::now();
-      transform.setOrigin(tf::Vector3(pose_x, pose_y, map_z));
-      tf::Quaternion quat = tf::createQuaternionFromRPY(0,0,pose_theta);
-      transform.setRotation(quat);
-      br_.sendTransform(tf::StampedTransform(transform, scan.header.stamp, "odom", "base_link"));
-      scan_pub_.publish(scan);
-      ros::Duration(0.25).sleep();
     }
   }
 }
@@ -457,7 +428,7 @@ std::vector<double> CountingModel(std::vector<int64_t> hits_map,
       occ_map.at(i) = occupancy;
     }
     else
-      occ_map.at(i) = 0.5;
+      occ_map.at(i) = -1;
   }
 
   return occ_map;
@@ -577,6 +548,8 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
         ray->SetPoints(math::Vector3(pose_x, pose_y, map_z),
                        math::Vector3(end_x, end_y, map_z));
         ray->GetIntersection(dist, entity_name);
+        if(dist>max_range)
+          dist = max_range;
 
         //add noise to hit distance
         dist = dist + noise_sampler(generator);
@@ -591,7 +564,8 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
         world2cell(hit_x, hit_y, map_resolution, traversible_grid->info.origin.position,
                    hit_cell_x, hit_cell_y);
 
-        //make sure cell is inside map boundaries
+        //count hit cell
+        //make sure hit cell is inside map boundaries
         if(cell2index(hit_cell_x, hit_cell_y, cells_size_x, cells_size_y,
                       hit_index))
         {
@@ -603,41 +577,31 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
             std::cout << "MAX NUMBER REACHED!!" << std::endl;
         }
 
-        //get missed cells
-        //walk along the ray to see which cells were hit
-        double dist_incr = 0.25*map_resolution;
-        double ray_dist = dist-dist_incr;
-        unsigned int last_miss_index = UINT_MAX;
+        //grid traversal line to find which grid cells are affected by ray
+        GMapping::IntPoint start(map_x, map_y);
+        GMapping::IntPoint end(hit_cell_x, hit_cell_y);
 
-        while(ray_dist>0)
+        GMapping::IntPoint linePoints[20000] ;
+        GMapping::GridLineTraversalLine line;
+        line.points=linePoints;
+        GMapping::GridLineTraversal::gridLine(start, end, &line);
+
+        //count missed cells
+        for (int i=0; i<line.num_points-1; i++)
         {
-          unsigned int miss_cell_x, miss_cell_y, miss_index;
-
-          double miss_x = pose_x + ray_dist*cos(ray_angle);
-          double miss_y = pose_y + ray_dist*sin(ray_angle);
-
-          world2cell(miss_x, miss_y, map_resolution, traversible_grid->info.origin.position,
-                     miss_cell_x, miss_cell_y);
+          unsigned int miss_index;
 
           //make sure cell is inside map boundaries
-          if(cell2index(miss_cell_x, miss_cell_y, cells_size_x, cells_size_y,
+          if(cell2index(line.points[i].x, line.points[i].y, cells_size_x, cells_size_y,
                         miss_index))
           {
-            //make sure we didn't already count this cell
-            if(miss_index != hit_index && miss_index != last_miss_index)
-            {
-              viz_grid.data.at(miss_index) = 50;
+            viz_grid.data.at(miss_index) = 50;
 
-              if(misses_map.at(miss_index) < INT64_MAX)
-                misses_map.at(miss_index) += 1;
-              else
-                std::cout << "MAX NUMBER REACHED!!" << std::endl;
-
-              last_miss_index = miss_index;
-            }
+            if(misses_map.at(miss_index) < INT64_MAX)
+              misses_map.at(miss_index) += 1;
+            else
+              std::cout << "MAX NUMBER REACHED!!" << std::endl;
           }
-
-          ray_dist-=dist_incr;
         }
 
         if(visualize_rays)
@@ -708,7 +672,7 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
           visualize_steps = false;
       }
     }
-    else //map is not in free space
+    else //sample is not in free space
     {
       invalid_samples.poses.push_back(sampled_pose);
     }
@@ -723,7 +687,13 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
   for(int map_i=0; map_i<occupancy_grid.size(); map_i++)
   {
     //calculate occupancy map
-    occ_map.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
+    if(occupancy_grid.at(map_i) < 0)
+      occ_map.data.at(map_i) = CellUnknown;
+    else if(occupancy_grid.at(map_i) < OccupiedThreshold)
+      occ_map.data.at(map_i) = CellFree;
+    else
+      occ_map.data.at(map_i) = CellOccupied;
+//    occ_map.data.at(map_i) = occupancy_grid.at(map_i) * CellOccupied;
 
     //(normalized) hits map
     hits_viz_grid.data.at(map_i) = double(hits_map.at(map_i))/double(max_num_hits) * CellOccupied;
@@ -732,14 +702,11 @@ nav_msgs::OccupancyGrid OccupancyMapFromWorld::MapSpace(nav_msgs::OccupancyGrid*
     miss_viz_grid.data.at(map_i) = double(misses_map.at(map_i))/double(max_num_misses) * CellOccupied;
   }
 
-  for(int i=0; i<10; i++)
-  {
-    valid_samples_pub.publish(valid_samples);
-    invalid_samples_pub.publish(invalid_samples);
-    hits_map_pub.publish(hits_viz_grid);
-    misses_map_pub.publish(miss_viz_grid);
-    ros::Duration(0.1).sleep();
-  }
+  valid_samples_pub.publish(valid_samples);
+  invalid_samples_pub.publish(invalid_samples);
+  hits_map_pub.publish(hits_viz_grid);
+  misses_map_pub.publish(miss_viz_grid);
+  ros::Duration(0.1).sleep();
 
   return occ_map;
 }

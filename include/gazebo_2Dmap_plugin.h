@@ -43,6 +43,7 @@
 #include <tf/transform_broadcaster.h>
 #include <geometry_msgs/PoseArray.h>
 #include <stdio.h>
+#include <gridlinetraversal.h>
 
 namespace gazebo {
 
@@ -154,6 +155,7 @@ class OccupancyMapFromWorld : public WorldPlugin {
   const int8_t CellUnknown = -1;
   const int8_t CellFree = 0;
   const int8_t CellOccupied = 100;
+  const double OccupiedThreshold = 0.25;
 };
 
 } // namespace gazebo
