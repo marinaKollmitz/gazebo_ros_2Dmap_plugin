@@ -22,7 +22,7 @@
 
 #include <gazebo/common/Time.hh>
 #include <gazebo/common/CommonTypes.hh>
-#include <gazebo/math/Vector3.hh>
+//#include <gazebo/math/Vector3.hh>
 
 namespace gazebo {
 
@@ -30,9 +30,9 @@ OccupancyMapFromWorld::~OccupancyMapFromWorld() {}
 
 void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
                                  sdf::ElementPtr _sdf) {
-  if (kPrintOnPluginLoad) {
-    gzdbg << __FUNCTION__ << "() called." << std::endl;
-  }
+  //if (kPrintOnPluginLoad) {
+  //  gzdbg << __FUNCTION__ << "() called." << std::endl;
+  //}
 
   world_ = _parent;
 
@@ -172,7 +172,7 @@ bool OccupancyMapFromWorld::ServiceCallback(std_srvs::Empty::Request& req,
   return true;
 }
 
-bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_center,
+bool OccupancyMapFromWorld::worldCellIntersection(const ignition::math::Vector3d& cell_center,
                                                   const double cell_length,
                                                   gazebo::physics::RayShapePtr ray)
 {
@@ -195,21 +195,21 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
 
     for(int i=-1; i<2; i+=2)
     {
-      double start_x = cell_center.x + i * side_length/2;
-      double start_y = cell_center.y - i * side_length/2;
+      double start_x = cell_center[0] + i * side_length/2;
+      double start_y = cell_center[1] - i * side_length/2;
 
       for(int j=-1; j<2; j+=2)
       {
-        double end_x = cell_center.x + j * side_length/2;
-        double end_y = cell_center.y + j * side_length/2;
+        double end_x = cell_center[0] + j * side_length/2;
+        double end_y = cell_center[1] + j * side_length/2;
 
         //      std::cout << "start_x" << start_x << std::endl;
         //      std::cout << "start_y" << start_y << std::endl;
         //      std::cout << "end_x" << end_x << std::endl;
         //      std::cout << "end_y" << end_y << std::endl;
 
-        ray->SetPoints(math::Vector3(start_x, start_y, cell_center.z),
-                       math::Vector3(end_x, end_y, cell_center.z));
+        ray->SetPoints(ignition::math::Vector3d(start_x, start_y, cell_center[3]),
+                       ignition::math::Vector3d(end_x, end_y, cell_center[3]));
         ray->GetIntersection(dist, entity_name);
 
         if(!entity_name.empty())
@@ -274,7 +274,7 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   //TODO map origin different from (0,0)
-  math::Vector3 map_origin(0,0,map_height_);
+  ignition::math::Vector3d map_origin(0,0,map_height_);
 
   unsigned int cells_size_x = map_size_x_ / map_resolution_;
   unsigned int cells_size_y = map_size_y_ / map_resolution_;
@@ -289,12 +289,12 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   occupancy_map_->info.resolution = map_resolution_;
   occupancy_map_->info.width = cells_size_x;
   occupancy_map_->info.height = cells_size_y;
-  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
-  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
-  occupancy_map_->info.origin.position.z = map_origin.z;
+  occupancy_map_->info.origin.position.x = map_origin[0] - map_size_x_ / 2;
+  occupancy_map_->info.origin.position.y = map_origin[1] - map_size_y_ / 2;
+  occupancy_map_->info.origin.position.z = map_origin[2];
   occupancy_map_->info.origin.orientation.w = 1;
 
-  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
+  gazebo::physics::PhysicsEnginePtr engine = world_->Physics();
   engine->InitForThread();
   gazebo::physics::RayShapePtr ray =
       boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
@@ -353,7 +353,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
             cell2world(cell_x + i, cell_y + j, map_size_x_, map_size_y_, map_resolution_,
                        world_x, world_y);
 
-            bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
+            bool cell_occupied = worldCellIntersection(ignition::math::Vector3d(world_x, world_y, map_height_),
                                                        map_resolution_, ray);
 
             if(cell_occupied)
