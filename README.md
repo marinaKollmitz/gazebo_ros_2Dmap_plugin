@@ -27,7 +27,7 @@ The generated map is published on the `/map` ros topic.
 You can use the `map_saver` node from the `map_server` package inside ros navigation to save your generated map to a .pgm and .yaml file. To do so, start the node before calling the `/gazebo_2Dmap_plugin/generate_map` ros service:
 
 ```
-rosrun map_server map_saver -f <mapname>
+rosrun map_server map_saver -f <mapname> /map:=/map2d
 ```
 The map is saved once you call the map generation service.
 
