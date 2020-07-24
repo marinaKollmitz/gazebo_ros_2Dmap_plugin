@@ -22,14 +22,14 @@ To generate the map, call the `/gazebo_2Dmap_plugin/generate_map` ros service:
 rosservice call /gazebo_2Dmap_plugin/generate_map
 ```
 
-The generated map is published on the `/map` ros topic. 
+The generated map is published on the `/map2d` ros topic. 
 
-You can use the `map_saver` node from the `map_server` package inside ros navigation to save your generated map to a .pgm and .yaml file. To do so, start the node before calling the `/gazebo_2Dmap_plugin/generate_map` ros service:
+You can use the `map_saver` node from the `map_server` package inside ros navigation to save your generated map to a .pgm and .yaml file:
 
 ```
-rosrun map_server map_saver -f <mapname>
+rosrun map_server map_saver -f <mapname> /map:=/map2d
 ```
-The map is saved once you call the map generation service.
+The last map generated with the ```/gazebo_2Dmap_plugin/generate_map``` call is saved.
 
 ## Hints
 
