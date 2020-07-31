@@ -38,6 +38,14 @@
 
 namespace gazebo {
 
+#if GAZEBO_MAJOR_VERSION >= 9
+  typedef ignition::math::Vector3d vector3d;
+  auto GetPhysicsPtr = std::mem_fn(&gazebo::physics::World::Physics);
+#else
+  typedef math::Vector3 vector3d;
+  auto GetPhysicsPtr = std::mem_fn(&gazebo::physics::World::GetPhysicsEngine);
+#endif
+
 /// \brief    Octomap plugin for Gazebo.
 /// \details  This plugin is dependent on ROS, and is not built if NO_ROS=TRUE is provided to
 ///           CMakeLists.txt. The PX4/Firmware build does not build this file.
@@ -59,8 +67,9 @@ class OccupancyMapFromWorld : public WorldPlugin {
   /// \param[in] _sdf SDF element that describes the plugin.
   void Load(physics::WorldPtr _parent, sdf::ElementPtr _sdf);
 
-  bool worldCellIntersection(const math::Vector3& cell_center, const double cell_length,
-                             gazebo::physics::RayShapePtr ray);
+  bool worldCellIntersection(const vector3d& cell_center, const double cell_length,
+                              gazebo::physics::RayShapePtr ray);
+  
 
 //  void FloodFill(const math::Vector3& seed_point,
 //                 const math::Vector3& bounding_box_origin,

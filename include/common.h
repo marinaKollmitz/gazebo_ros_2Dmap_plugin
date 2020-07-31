@@ -22,9 +22,12 @@
 #ifndef ROTORS_GAZEBO_PLUGINS_COMMON_H_
 #define ROTORS_GAZEBO_PLUGINS_COMMON_H_
 
+#define GAZEBO_9 (GAZEBO_MAJOR_VERSION >= 9)
+#define GAZEBO_7 (GAZEBO_MAJOR_VERSION == 7)
+
 #include <Eigen/Dense>
-#include <gazebo-7/gazebo/gazebo.hh>
-//#include <gazebo/gazebo.hh>
+// #include <gazebo-7/gazebo/gazebo.hh>
+#include <gazebo/gazebo.hh>
 
 namespace gazebo {
 
