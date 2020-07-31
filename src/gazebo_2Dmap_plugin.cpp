@@ -50,6 +50,16 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   if(_sdf->HasElement("map_z"))
     map_height_ = _sdf->GetElement("map_z")->Get<double>();
 
+  init_robot_x_ = 0.0;
+
+  if(_sdf->HasElement("init_robot_x"))
+    init_robot_x_ = _sdf->GetElement("init_robot_x")->Get<double>();
+
+  init_robot_y_ = 0.0;
+
+  if(_sdf->HasElement("init_robot_y"))
+    init_robot_y_ = _sdf->GetElement("init_robot_y")->Get<double>();
+
   map_size_x_ = 10.0;
 
   if(_sdf->HasElement("map_size_x"))
@@ -319,8 +329,8 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   std::cout << "Starting wavefront expansion for mapping" << std::endl;
 
   //identify free space by spreading out from initial robot cell
-  double robot_x = 0;
-  double robot_y = 0;
+  double robot_x = init_robot_x_;
+  double robot_y = init_robot_y_;
 
   //find initial robot cell
   unsigned int cell_x, cell_y, map_index;
