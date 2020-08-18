@@ -100,6 +100,8 @@ class OccupancyMapFromWorld : public WorldPlugin {
   double map_height_;
   double map_size_x_;
   double map_size_y_;
+  double init_robot_x_;
+  double init_robot_y_;
 };
 
 } // namespace gazebo
