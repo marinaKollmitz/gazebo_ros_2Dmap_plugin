@@ -13,6 +13,8 @@ To include the plugin, add the following line in between the `<world> </world>` 
     <map_height>0.3</map_height>         <!-- in meters, optional, default 0.3 -->
     <map_size_x>10</map_size_x>          <!-- in meters, optional, default 10 -->
     <map_size_y>10</map_size_y>          <!-- in meters, optional, default 10 -->
+    <init_robot_x>0</init_robot_x>          <!-- x coordinate in meters, optional, default 0 -->
+    <init_robot_y>0</init_robot_y>          <!-- y coordinate in meters, optional, default 0 -->
 </plugin>
 ```
 

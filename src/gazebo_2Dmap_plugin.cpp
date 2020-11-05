@@ -22,7 +22,7 @@
 
 #include <gazebo/common/Time.hh>
 #include <gazebo/common/CommonTypes.hh>
-#include <gazebo/math/Vector3.hh>
+
 
 namespace gazebo {
 
@@ -30,9 +30,9 @@ OccupancyMapFromWorld::~OccupancyMapFromWorld() {}
 
 void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
                                  sdf::ElementPtr _sdf) {
-  if (kPrintOnPluginLoad) {
-    gzdbg << __FUNCTION__ << "() called." << std::endl;
-  }
+  // if (kPrintOnPluginLoad) {
+  //   gzdbg << __FUNCTION__ << "() called." << std::endl;
+  // }
 
   world_ = _parent;
 
@@ -49,6 +49,16 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   if(_sdf->HasElement("map_z"))
     map_height_ = _sdf->GetElement("map_z")->Get<double>();
+
+  init_robot_x_ = 0.0;
+
+  if(_sdf->HasElement("init_robot_x"))
+    init_robot_x_ = _sdf->GetElement("init_robot_x")->Get<double>();
+
+  init_robot_y_ = 0.0;
+
+  if(_sdf->HasElement("init_robot_y"))
+    init_robot_y_ = _sdf->GetElement("init_robot_y")->Get<double>();
 
   map_size_x_ = 10.0;
 
@@ -172,9 +182,11 @@ bool OccupancyMapFromWorld::ServiceCallback(std_srvs::Empty::Request& req,
   return true;
 }
 
-bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_center,
-                                                  const double cell_length,
-                                                  gazebo::physics::RayShapePtr ray)
+
+bool OccupancyMapFromWorld::worldCellIntersection(const vector3d& cell_center,
+                                                const double cell_length,
+                                                gazebo::physics::RayShapePtr ray)
+
 {
   //check for collisions with rays surrounding the cell
   //    ---
@@ -195,21 +207,29 @@ bool OccupancyMapFromWorld::worldCellIntersection(const math::Vector3& cell_cent
 
     for(int i=-1; i<2; i+=2)
     {
-      double start_x = cell_center.x + i * side_length/2;
-      double start_y = cell_center.y - i * side_length/2;
+#if GAZEBO_MAJOR_VERSION >= 9
+      double start_x = cell_center.X() + i * side_length/2;
+      double start_y = cell_center.Y() - i * side_length/2;
+
+      for(int j=-1; j<2; j+=2)
+      {
+        double end_x = cell_center.X() + j * side_length/2;
+        double end_y = cell_center.Y() + j * side_length/2;
+
+        ray->SetPoints(vector3d(start_x, start_y, cell_center.Z()),
+               vector3d(end_x, end_y, cell_center.Z()));
+#else
+        double start_x = cell_center.x + i * side_length/2;
+        double start_y = cell_center.y - i * side_length/2;
 
       for(int j=-1; j<2; j+=2)
       {
         double end_x = cell_center.x + j * side_length/2;
         double end_y = cell_center.y + j * side_length/2;
 
-        //      std::cout << "start_x" << start_x << std::endl;
-        //      std::cout << "start_y" << start_y << std::endl;
-        //      std::cout << "end_x" << end_x << std::endl;
-        //      std::cout << "end_y" << end_y << std::endl;
-
-        ray->SetPoints(math::Vector3(start_x, start_y, cell_center.z),
-                       math::Vector3(end_x, end_y, cell_center.z));
+        ray->SetPoints(vector3d(start_x, start_y, cell_center.z),
+                       vector3d(end_x, end_y, cell_center.z));
+#endif
         ray->GetIntersection(dist, entity_name);
 
         if(!entity_name.empty())
@@ -274,7 +294,7 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   //TODO map origin different from (0,0)
-  math::Vector3 map_origin(0,0,map_height_);
+  vector3d map_origin(0,0,map_height_);
 
   unsigned int cells_size_x = map_size_x_ / map_resolution_;
   unsigned int cells_size_y = map_size_y_ / map_resolution_;
@@ -289,12 +309,18 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   occupancy_map_->info.resolution = map_resolution_;
   occupancy_map_->info.width = cells_size_x;
   occupancy_map_->info.height = cells_size_y;
+#if GAZEBO_MAJOR_VERSION >= 9
+  occupancy_map_->info.origin.position.x = map_origin.X() - map_size_x_ / 2;
+  occupancy_map_->info.origin.position.y = map_origin.Y() - map_size_y_ / 2;
+  occupancy_map_->info.origin.position.z = map_origin.Z();
+#else
   occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
   occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
   occupancy_map_->info.origin.position.z = map_origin.z;
+#endif
   occupancy_map_->info.origin.orientation.w = 1;
 
-  gazebo::physics::PhysicsEnginePtr engine = world_->GetPhysicsEngine();
+  gazebo::physics::PhysicsEnginePtr engine = GetPhysicsPtr(world_);
   engine->InitForThread();
   gazebo::physics::RayShapePtr ray =
       boost::dynamic_pointer_cast<gazebo::physics::RayShape>(
@@ -303,8 +329,8 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   std::cout << "Starting wavefront expansion for mapping" << std::endl;
 
   //identify free space by spreading out from initial robot cell
-  double robot_x = 0;
-  double robot_y = 0;
+  double robot_x = init_robot_x_;
+  double robot_y = init_robot_y_;
 
   //find initial robot cell
   unsigned int cell_x, cell_y, map_index;
@@ -353,7 +379,7 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
             cell2world(cell_x + i, cell_y + j, map_size_x_, map_size_y_, map_resolution_,
                        world_x, world_y);
 
-            bool cell_occupied = worldCellIntersection(math::Vector3(world_x, world_y, map_height_),
+            bool cell_occupied = worldCellIntersection(vector3d(world_x, world_y, map_height_),
                                                        map_resolution_, ray);
 
             if(cell_occupied)
