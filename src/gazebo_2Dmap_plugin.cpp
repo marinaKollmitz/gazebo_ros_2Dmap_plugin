@@ -36,11 +36,17 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   world_ = _parent;
 
-  map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("map2d", 1, true);
+  if(_sdf->HasElement("topic_name"))
+    topic_name_ = _sdf->GetElement("topic_name")->Get<std::string>();
+
+  map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>(topic_name_, 1, true);
   map_service_ = nh_.advertiseService(
         "gazebo_2Dmap_plugin/generate_map", &OccupancyMapFromWorld::ServiceCallback, this);
 
   map_resolution_ = 0.1;
+
+  if(_sdf->HasElement("frame"))
+    frame_ = _sdf->GetElement("frame")->Get<std::string>();
 
   if(_sdf->HasElement("map_resolution"))
     map_resolution_ = _sdf->GetElement("map_resolution")->Get<double>();
@@ -69,6 +75,14 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   if(_sdf->HasElement("map_size_y"))
     map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
+
+  if(_sdf->HasElement("origin_x"))
+    origin_set_ = true;
+    origin_x_ = _sdf->GetElement("origin_x")->Get<double>();
+
+  if(_sdf->HasElement("origin_y"))
+    origin_set_ = true;
+    origin_y_ = _sdf->GetElement("origin_y")->Get<double>();
 
   sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
 
@@ -294,7 +308,7 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   //TODO map origin different from (0,0)
-  vector3d map_origin(0,0,map_height_);
+  vector3d map_origin(origin_x_,origin_y_,map_height_);
 
   unsigned int cells_size_x = map_size_x_ / map_resolution_;
   unsigned int cells_size_y = map_size_y_ / map_resolution_;
@@ -304,18 +318,34 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   //all cells are initially unknown
   std::fill(occupancy_map_->data.begin(), occupancy_map_->data.end(), -1);
   occupancy_map_->header.stamp = ros::Time::now();
-  occupancy_map_->header.frame_id = "odom"; //TODO map frame
+  occupancy_map_->header.frame_id = frame_;
   occupancy_map_->info.map_load_time = ros::Time(0);
   occupancy_map_->info.resolution = map_resolution_;
   occupancy_map_->info.width = cells_size_x;
   occupancy_map_->info.height = cells_size_y;
 #if GAZEBO_MAJOR_VERSION >= 9
-  occupancy_map_->info.origin.position.x = map_origin.X() - map_size_x_ / 2;
-  occupancy_map_->info.origin.position.y = map_origin.Y() - map_size_y_ / 2;
+  if(origin_set_)
+  {
+    occupancy_map_->info.origin.position.x = map_origin.X();
+    occupancy_map_->info.origin.position.y = map_origin.Y();
+  }
+  else
+  {
+    occupancy_map_->info.origin.position.x = map_origin.X() - map_size_x_ / 2;
+    occupancy_map_->info.origin.position.y = map_origin.Y() - map_size_y_ / 2;
+  }
   occupancy_map_->info.origin.position.z = map_origin.Z();
 #else
-  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
-  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
+  if(origin_set_)
+  {
+    occupancy_map_->info.origin.position.x = map_origin.X();
+    occupancy_map_->info.origin.position.y = map_origin.Y();
+  }
+  else
+  {
+    occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
+    occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
+  }
   occupancy_map_->info.origin.position.z = map_origin.z;
 #endif
   occupancy_map_->info.origin.orientation.w = 1;
