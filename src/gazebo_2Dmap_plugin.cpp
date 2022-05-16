@@ -75,7 +75,7 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   if(_sdf->HasElement("map_size_y"))
     map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
-  
+
   sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
 
   //  std::string service_name = "world/get_octomap";
