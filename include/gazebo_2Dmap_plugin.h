@@ -113,9 +113,6 @@ class OccupancyMapFromWorld : public WorldPlugin {
   double map_size_y_;
   double init_robot_x_;
   double init_robot_y_;
-  double origin_x_ = 0.0;
-  double origin_y_ = 0.0;
-  bool origin_set_ = false;
 };
 
 } // namespace gazebo

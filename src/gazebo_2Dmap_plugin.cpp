@@ -75,15 +75,7 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
 
   if(_sdf->HasElement("map_size_y"))
     map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
-
-  if(_sdf->HasElement("origin_x"))
-    origin_set_ = true;
-    origin_x_ = _sdf->GetElement("origin_x")->Get<double>();
-
-  if(_sdf->HasElement("origin_y"))
-    origin_set_ = true;
-    origin_y_ = _sdf->GetElement("origin_y")->Get<double>();
-
+  
   sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
 
   //  std::string service_name = "world/get_octomap";
@@ -308,7 +300,7 @@ bool OccupancyMapFromWorld::index2cell(int index, unsigned int cell_size_x,
 void OccupancyMapFromWorld::CreateOccupancyMap()
 {
   //TODO map origin different from (0,0)
-  vector3d map_origin(origin_x_,origin_y_,map_height_);
+  vector3d map_origin(0,0,map_height_);
 
   unsigned int cells_size_x = map_size_x_ / map_resolution_;
   unsigned int cells_size_y = map_size_y_ / map_resolution_;
@@ -324,28 +316,12 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   occupancy_map_->info.width = cells_size_x;
   occupancy_map_->info.height = cells_size_y;
 #if GAZEBO_MAJOR_VERSION >= 9
-  if(origin_set_)
-  {
-    occupancy_map_->info.origin.position.x = map_origin.X();
-    occupancy_map_->info.origin.position.y = map_origin.Y();
-  }
-  else
-  {
-    occupancy_map_->info.origin.position.x = map_origin.X() - map_size_x_ / 2;
-    occupancy_map_->info.origin.position.y = map_origin.Y() - map_size_y_ / 2;
-  }
+  occupancy_map_->info.origin.position.x = map_origin.X() - map_size_x_ / 2;
+  occupancy_map_->info.origin.position.y = map_origin.Y() - map_size_y_ / 2;
   occupancy_map_->info.origin.position.z = map_origin.Z();
 #else
-  if(origin_set_)
-  {
-    occupancy_map_->info.origin.position.x = map_origin.X();
-    occupancy_map_->info.origin.position.y = map_origin.Y();
-  }
-  else
-  {
-    occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
-    occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
-  }
+  occupancy_map_->info.origin.position.x = map_origin.x - map_size_x_ / 2;
+  occupancy_map_->info.origin.position.y = map_origin.y - map_size_y_ / 2;
   occupancy_map_->info.origin.position.z = map_origin.z;
 #endif
   occupancy_map_->info.origin.orientation.w = 1;
