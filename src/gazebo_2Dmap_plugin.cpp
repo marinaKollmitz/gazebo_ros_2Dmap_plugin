@@ -76,6 +76,9 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   if(_sdf->HasElement("map_size_y"))
     map_size_y_ = _sdf->GetElement("map_size_y")->Get<double>();
 
+  if(_sdf->HasElement("robot_clearance"))
+    robot_clearance_ = _sdf->GetElement("robot_clearance")->Get<double>();
+
   sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
 
   //  std::string service_name = "world/get_octomap";
@@ -349,7 +352,9 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
                            "map");
     return;
   }
-
+  int original_robot_index = map_index;
+  int origX = cell_x;
+  int origY = cell_y;
   std::vector<unsigned int> wavefront;
   wavefront.push_back(map_index);
 
@@ -403,6 +408,31 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
             }
           }
         }
+      }
+    }
+  }
+
+  // Clearing the area around the robot if clearance is set
+  if(robot_clearance_ > 0.0)
+  {
+    std::cout << "robot_clearance set: " << robot_clearance_ << std::endl;
+    int cellsInRange = robot_clearance_ / map_resolution_;
+    for(int xCell = -cellsInRange; xCell < cellsInRange; xCell++)
+    {
+      for(int yCell = -cellsInRange; yCell < cellsInRange; yCell++)
+      {
+        double xDelta = xCell * map_resolution_;
+        double yDelta = yCell * map_resolution_; 
+        double distance = pow(xDelta, 2) + pow(yDelta, 2);
+	      distance = sqrt(distance); 
+        if(abs(distance) < robot_clearance_)
+        {
+          int newX = origX + xCell;
+          int newY = origY + yCell;
+          int map_idx = newX + (newY * cells_size_y);
+          occupancy_map_->data.at(map_idx) = 0;
+        }
+        
       }
     }
   }

@@ -15,6 +15,9 @@ To include the plugin, add the following line in between the `<world> </world>` 
     <map_size_y>10</map_size_y>          <!-- in meters, optional, default 10 -->
     <init_robot_x>0</init_robot_x>          <!-- x coordinate in meters, optional, default 0 -->
     <init_robot_y>0</init_robot_y>          <!-- y coordinate in meters, optional, default 0 -->
+    <frame>map</frame>                    <!-- frame in which the msg is made -->
+    <topic_name>grid_map</topic_name>       <!-- name of the topic the map should be published on -->
+    <robot_clearance>0.5</robot_clearance>  <!-- area around init_robot_x/y to be force-cleared -->
 </plugin>
 ```
 
@@ -36,4 +39,4 @@ The last map generated with the ```/gazebo_2Dmap_plugin/generate_map``` call is 
 ## Hints
 
 * To identify the connected free space the robot would discover during mapping, the plugin performs a wavefront exploration along the occupancy grid starting from the origin of the gazebo world coordinate system. Please ensure that the corresponding cell is in the continuous free space. 
-* The plugin will map all objects in the world, including the robot. Remove all unwanted  objects before creating the map. 
+* The plugin will map all objects in the world, including the robot. Remove all unwanted  objects before creating the map or use the robot_clearance tag whilst including the plugin to force "clear" the area with a certain radius around the position given through init_robot_x and init_robot_y
