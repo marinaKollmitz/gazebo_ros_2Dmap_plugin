@@ -355,8 +355,6 @@ void OccupancyMapFromWorld::CreateOccupancyMap()
   int original_robot_index = map_index;
   int origX = cell_x;
   int origY = cell_y;
-  std::cout << "original robot index: " << +original_robot_index << std::endl;
-  std::cout << "origX: " << origX << " origY: " << origY << std::endl;
   std::vector<unsigned int> wavefront;
   wavefront.push_back(map_index);
 
