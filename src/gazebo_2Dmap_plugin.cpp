@@ -79,7 +79,8 @@ void OccupancyMapFromWorld::Load(physics::WorldPtr _parent,
   if(_sdf->HasElement("robot_clearance"))
     robot_clearance_ = _sdf->GetElement("robot_clearance")->Get<double>();
 
-  sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
+  if(_sdf->HasElement("contactSensor"))
+    sdf::ElementPtr contactSensorSDF = _sdf->GetElement("contactSensor");
 
   //  std::string service_name = "world/get_octomap";
   //  std::string octomap_pub_topic = "world/octomap";
