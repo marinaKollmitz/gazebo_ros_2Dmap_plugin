@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(gazebo_ros_2dmap_plugin)
+project(gazebo_ros_2d_map_plugin)
 
 find_package(catkin REQUIRED COMPONENTS
   gazebo_msgs
