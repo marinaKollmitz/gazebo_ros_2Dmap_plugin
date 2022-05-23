@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package>
-  <name>gazebo_ros_2Dmap_plugin</name>
+  <name>gazebo_ros_2dmap_plugin</name>
   <version>0.0.0</version>
   <description>Gazebo simulator plugin to automatically generate a 2D occupancy map from the simulated world at a given height.</description>
 
