@@ -26,9 +26,9 @@ include_directories(
   include ${catkin_INCLUDE_DIRS} ${GAZEBO_MSG_INCLUDE_DIRS} ${GAZEBO_INCLUDE_DIRS}
 )
 
-add_library(gazebo_2Dmap_plugin SHARED src/gazebo_2Dmap_plugin.cpp)
-target_link_libraries(gazebo_2Dmap_plugin ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
+add_library(gazebo_2d_map_plugin SHARED src/gazebo_2Dmap_plugin.cpp)
+target_link_libraries(gazebo_2d_map_plugin ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES})
 
-install(TARGETS gazebo_2Dmap_plugin
+install(TARGETS gazebo_2d_map_plugin
 LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
