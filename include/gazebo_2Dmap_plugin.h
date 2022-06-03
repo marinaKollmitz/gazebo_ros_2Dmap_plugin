@@ -105,12 +105,15 @@ class OccupancyMapFromWorld : public WorldPlugin {
   ros::Publisher map_pub_;
   nav_msgs::OccupancyGrid* occupancy_map_;
   std::string name_;
+  std::string frame_ = "odom";
+  std::string topic_name_ = "map2d";
   double map_resolution_;
   double map_height_;
   double map_size_x_;
   double map_size_y_;
   double init_robot_x_;
   double init_robot_y_;
+  double robot_clearance_;
 };
 
 } // namespace gazebo
