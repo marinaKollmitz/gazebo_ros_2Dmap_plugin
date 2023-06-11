@@ -6,6 +6,7 @@ find_package(catkin REQUIRED COMPONENTS
   gazebo_ros
   gazebo_ros_control
   gazebo_plugins
+  costmap_2d
   joint_state_publisher
   kdl_parser
   robot_state_publisher
