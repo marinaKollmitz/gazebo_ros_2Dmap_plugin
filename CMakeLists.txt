@@ -15,7 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   xacro
 )
 
-add_definitions(-std=c++11)
+add_definitions(-std=c++17)
 
 find_package(gazebo REQUIRED)
 link_directories(${GAZEBO_LIBRARY_DIRS})
